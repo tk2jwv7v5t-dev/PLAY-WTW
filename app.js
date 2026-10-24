@@ -33,7 +33,6 @@
     { code: 'gaming', name: 'قيمنق', desc: 'بث ألعاب وتنسيق', icon: '🎮' },
     { code: 'cinema', name: 'السينما', desc: 'نتفرج سوا', icon: '🎬' },
     { code: 'study', name: 'المذاكرة', desc: 'شغل وتركيز', icon: '📚' },
-    { code: 'music', name: 'طرب', desc: 'أغاني وجلسات', icon: '🎧' },
     { code: 'dev', name: 'المبرمجين', desc: 'كود وشاشات', icon: '💻' },
   ];
 
