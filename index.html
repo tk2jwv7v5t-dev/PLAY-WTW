@@ -2,722 +2,220 @@
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>غُرَف — سوالف وبث شاشة 4K</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>غُرَف — رومات صوت وشات وبث شاشة 4K</title>
+  <meta name="description" content="سو روم وسولف مع خويك بالصوت والشات، وبث شاشتك لين 4K وبالفريمات اللي يتحملها نتك. بدون تسجيل.">
+  <meta name="theme-color" content="#07071a">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-  <!-- ================= اللوبي ================= -->
-  <main id="lobby" class="lobby">
-    <div class="brand">
-      <div class="brand-mark">غ</div>
-      <div class="brand-name">غُرَف</div>
-    </div>
-
-    <section class="hero">
-      <h1>ادخل الغرفة، سولف مع خويك،<br><span>وبث شاشتك بجودة 4K</span></h1>
-      <p>صوت وكتابة ومشاركة شاشة مباشرة بين الأجهزة. بدون تسجيل وبدون تحميل برامج.</p>
-    </section>
-
-    <div id="inviteBanner" class="invite-banner hidden">
-      📨 <span>انت مدعو لغرفة <b id="inviteRoom"></b> — اكتب اسمك واضغط دخول.</span>
-      <button id="inviteJoin" class="btn btn-primary" style="margin-inline-start:auto">دخول</button>
-    </div>
-
-    <div class="card name-card">
-      <label class="label" for="nameInput">اسمك (يشوفه اللي معك)</label>
-      <input id="nameInput" class="input" maxlength="24" placeholder="مثال: أبو فهد" autocomplete="nickname">
-    </div>
-
-    <h2 class="section-title">الغرف العامة</h2>
-    <div id="roomsGrid" class="rooms-grid"></div>
-
-    <h2 class="section-title">غرفة خاصة</h2>
-    <div class="card">
-      <label class="label" for="codeInput">اكتب رمز الغرفة (حروف إنجليزية وأرقام) أو سو غرفة جديدة وارسل الرابط لخويك</label>
-      <div class="custom-row">
-        <input id="codeInput" class="input" maxlength="32" placeholder="مثال: shillah-2026" dir="ltr">
-        <button id="joinCodeBtn" class="btn">دخول بالرمز</button>
-        <button id="newRoomBtn" class="btn btn-primary">＋ غرفة جديدة</button>
-      </div>
-    </div>
-
-    <div class="features">
-      <div class="feature"><b>🎙️ صوت مباشر</b>مع إلغاء الصدى والضوضاء</div>
-      <div class="feature"><b>🖥️ بث شاشة لين 4K</b>60 فريم وصوت التبويب</div>
-      <div class="feature"><b>💬 دردشة كتابية</b>تنرسل لكل اللي بالغرفة</div>
-      <div class="feature"><b>🔒 اتصال مباشر</b>البث يروح من جهازك لهم مباشرة</div>
-    </div>
-  </main>
-
-  <!-- ================= الغرفة ================= -->
-  <div id="room" class="room hidden">
-    <header class="room-header">
-      <div class="left">
-        <div class="brand-mark" style="width:36px;height:36px;font-size:18px">غ</div>
-        <div style="min-width:0">
-          <div id="roomTitle" class="room-name">الغرفة</div>
-          <div class="status"><span id="statusDot" class="dot wait"></span><span id="statusText">جاري الاتصال…</span></div>
-        </div>
-      </div>
-      <button id="copyLinkBtn" class="btn">🔗 <span class="txt">انسخ رابط الدعوة</span></button>
-    </header>
-
-    <div class="room-body">
-      <section id="stage" class="stage">
-        <div id="emptyStage" class="empty-stage">
-          <div class="big">🖥️</div>
-          <h3>ما أحد يبث للحين</h3>
-          <p>اضغط «بث الشاشة» تحت عشان يشوف خويك شاشتك</p>
-        </div>
-      </section>
-
-      <aside class="sidebar">
-        <div class="members">
-          <h4>اللي بالغرفة (<span id="memberCount">1</span>)</h4>
-          <div id="memberList"></div>
-        </div>
-        <div class="chat">
-          <div class="chat-head">الدردشة</div>
-          <div id="messages" class="messages"></div>
-        </div>
-        <form id="chatForm" class="chat-form" autocomplete="off">
-          <input id="chatInput" class="input" maxlength="500" placeholder="اكتب رسالة…">
-          <button class="btn btn-primary" type="submit">إرسال</button>
-        </form>
-      </aside>
-    </div>
-
-    <footer class="controls">
-      <button id="micBtn" class="ctrl">🎙️ <span class="txt">المايك شغال</span></button>
-      <button id="shareBtn" class="ctrl">🖥️ <span class="txt">بث الشاشة</span></button>
-      <div class="quality">
-        <select id="resSelect" class="select" title="الجودة">
-          <option value="2160" selected>4K (2160p)</option>
-          <option value="1440">2K (1440p)</option>
-          <option value="1080">Full HD (1080p)</option>
-          <option value="720">HD (720p)</option>
-        </select>
-        <select id="fpsSelect" class="select" title="الفريمات">
-          <option value="60" selected>60 FPS</option>
-          <option value="30">30 FPS</option>
-        </select>
-      </div>
-      <button id="leaveBtn" class="ctrl btn-danger">🚪 <span class="txt">طلوع</span></button>
-    </footer>
+  <!-- الخلفية -->
+  <div class="bg" aria-hidden="true">
+    <span class="orb o1"></span><span class="orb o2"></span><span class="orb o3"></span>
+    <div class="grid-lines"></div>
   </div>
 
-  <!-- PeerJS: يتكفل بالاتصال بين المتصفحات (WebRTC) بدون سيرفر خاص فيك -->
+  <!-- ================= اللوبي ================= -->
+  <main id="lobby" class="lobby">
+    <header class="lobby-top">
+      <div class="brand"><div class="brand-mark">غ</div><span>غُرَف</span></div>
+      <span class="pill"><i class="dot on"></i>بدون تسجيل · اتصال مباشر بين الأجهزة</span>
+    </header>
+
+    <section class="hero">
+      <h1>رومك الخاص للسوالف<br><span class="grad">وبث شاشتك بجودة 4K</span></h1>
+      <p>سو روم، ارسل الرابط لخويك، وسولفوا بالصوت والشات وشاركوا الشاشة بالدقة والفريمات اللي يتحملها نتك.</p>
+      <ul class="features">
+        <li class="glass">🎙️ مكالمة صوتية</li>
+        <li class="glass">💬 شات مباشر</li>
+        <li class="glass">🖥️ بث لين 4K · 144 فريم</li>
+        <li class="glass">🔒 مباشر P2P</li>
+      </ul>
+    </section>
+
+    <section class="glass join-card">
+      <div id="inviteBanner" class="invite hidden">📨 انت مدعو لروم <b id="inviteRoom" dir="ltr"></b> — اكتب اسمك وادخل</div>
+
+      <label class="label" for="nameInput">اسمك (يشوفه اللي معك)</label>
+      <input id="nameInput" class="input" maxlength="24" placeholder="مثال: أبو فهد" autocomplete="nickname">
+
+      <button id="createBtn" class="btn btn-primary btn-lg">＋ سو روم جديد</button>
+
+      <div class="divider"><span>أو ادخل برمز الروم</span></div>
+
+      <form id="joinForm" class="row">
+        <input id="codeInput" class="input mono" maxlength="24" placeholder="room-code" dir="ltr" autocapitalize="off" autocomplete="off" spellcheck="false">
+        <button class="btn btn-glass" type="submit">دخول</button>
+      </form>
+    </section>
+
+    <section class="public">
+      <div class="section-head">
+        <h2>رومات عامة</h2>
+        <button id="refreshRooms" class="btn-text" type="button">تحديث</button>
+      </div>
+      <div id="publicRooms" class="rooms-grid"></div>
+    </section>
+
+    <footer class="foot">الصوت والشاشة يروحون مباشرة بينك وبين اللي معك — ما فيه سيرفر يخزن شي.</footer>
+  </main>
+
+  <!-- ================= الروم ================= -->
+  <div id="room" class="room hidden">
+    <header class="room-top glass">
+      <div class="room-info">
+        <div class="brand-mark sm">غ</div>
+        <div>
+          <div id="roomTitle" class="room-title"></div>
+          <div class="room-sub"><span id="roomCode" class="mono" dir="ltr"></span> · <span id="memberCount"></span></div>
+        </div>
+      </div>
+      <div class="top-actions">
+        <span id="netStatus" class="pill"><i class="dot"></i><span>يتصل…</span></span>
+        <button id="copyLinkBtn" class="btn btn-glass btn-sm" type="button"><span data-icon="link"></span><span class="btn-label">نسخ رابط الدعوة</span></button>
+        <button id="panelToggle" class="icon-btn" type="button" title="الشات" aria-label="الشات"><span data-icon="chat"></span><span id="unread" class="badge hidden"></span></button>
+      </div>
+    </header>
+
+    <section class="stage-wrap">
+      <div id="stage" class="stage">
+        <div id="screens" class="screens"></div>
+        <div id="people" class="people"></div>
+      </div>
+
+      <nav class="dock glass" aria-label="التحكم">
+        <button id="micBtn" class="dock-btn" type="button" title="المايك (M)"></button>
+        <button id="deafBtn" class="dock-btn" type="button" title="كتم الصوت (D)"></button>
+        <div class="split">
+          <button id="shareBtn" class="dock-btn" type="button" title="بث الشاشة"></button>
+          <button id="shareCfgBtn" class="dock-btn mini" type="button" title="جودة البث" aria-label="جودة البث"><span data-icon="sliders"></span></button>
+        </div>
+        <button id="settingsBtn" class="dock-btn" type="button" title="الإعدادات" aria-label="الإعدادات"><span data-icon="cog"></span></button>
+        <button id="leaveBtn" class="dock-btn danger" type="button" title="اطلع من الروم" aria-label="اطلع من الروم"><span data-icon="phoneOff"></span></button>
+      </nav>
+    </section>
+
+    <aside id="panel" class="panel glass">
+      <div class="tabs">
+        <button class="tab active" type="button" data-tab="chat">الشات</button>
+        <button class="tab" type="button" data-tab="members">الأعضاء <span id="membersBadge" class="count"></span></button>
+        <button id="panelClose" class="icon-btn sm only-mobile" type="button" aria-label="سكّر"><span data-icon="x"></span></button>
+      </div>
+
+      <div id="tab-chat" class="tab-body chat">
+        <div id="chatList" class="chat-list" aria-live="polite"></div>
+        <div id="typing" class="typing"></div>
+        <form id="chatForm" class="chat-form">
+          <input id="chatInput" class="input" maxlength="1000" placeholder="اكتب رسالة…" autocomplete="off">
+          <button class="icon-btn accent" type="submit" title="ارسال" aria-label="ارسال"><span data-icon="send"></span></button>
+        </form>
+      </div>
+
+      <div id="tab-members" class="tab-body hidden">
+        <div id="membersList" class="members-list"></div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- ================= نافذة جودة البث ================= -->
+  <div id="shareModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="shareTitle">
+    <form id="shareForm" class="modal-card glass">
+      <div class="modal-head">
+        <h3 id="shareTitle">جودة بث الشاشة</h3>
+        <button type="button" class="icon-btn sm" data-close aria-label="سكّر"><span data-icon="x"></span></button>
+      </div>
+
+      <div class="field">
+        <div class="label">إعدادات جاهزة</div>
+        <div id="presets" class="presets"></div>
+      </div>
+
+      <div class="field">
+        <div class="label">الدقة</div>
+        <div class="seg">
+          <label><input type="radio" name="res" value="720"><span>720p</span></label>
+          <label><input type="radio" name="res" value="1080"><span>1080p</span></label>
+          <label><input type="radio" name="res" value="1440"><span>1440p 2K</span></label>
+          <label><input type="radio" name="res" value="2160"><span>2160p 4K</span></label>
+          <label><input type="radio" name="res" value="native"><span>دقة شاشتي</span></label>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="label">الفريمات (FPS)</div>
+        <div class="seg">
+          <label><input type="radio" name="fps" value="15"><span>15</span></label>
+          <label><input type="radio" name="fps" value="30"><span>30</span></label>
+          <label><input type="radio" name="fps" value="60"><span>60</span></label>
+          <label><input type="radio" name="fps" value="90"><span>90</span></label>
+          <label><input type="radio" name="fps" value="120"><span>120</span></label>
+          <label><input type="radio" name="fps" value="144"><span>144</span></label>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="label">وش بتبث؟</div>
+        <div class="seg">
+          <label><input type="radio" name="mode" value="detail"><span>نصوص وكود (أوضح)</span></label>
+          <label><input type="radio" name="mode" value="balanced"><span>متوازن</span></label>
+          <label><input type="radio" name="mode" value="motion"><span>ألعاب وأفلام (أنعم)</span></label>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="label">البت ريت <b id="brVal" dir="ltr"></b></div>
+        <label class="switch"><input type="checkbox" id="brAuto"><i></i><span>تلقائي حسب الدقة والفريمات</span></label>
+        <input id="brRange" type="range" min="1" max="80" step="1" aria-label="البت ريت بالميقابت">
+        <p id="brHint" class="hint"></p>
+      </div>
+
+      <label class="switch"><input type="checkbox" id="shareAudio"><i></i><span>بث صوت الجهاز / التاب مع الشاشة</span></label>
+
+      <p class="hint">إذا البث يقطّع، نزّل الفريمات أو الدقة أو البت ريت. الدقة ما تطلع أعلى من دقة شاشتك الحقيقية.</p>
+
+      <div class="modal-foot">
+        <button type="button" class="btn btn-glass" data-close>إلغاء</button>
+        <button id="shareSubmit" class="btn btn-primary" type="submit">ابدأ البث</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- ================= نافذة الإعدادات ================= -->
+  <div id="settingsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <div class="modal-card glass">
+      <div class="modal-head">
+        <h3 id="settingsTitle">الإعدادات</h3>
+        <button type="button" class="icon-btn sm" data-close aria-label="سكّر"><span data-icon="x"></span></button>
+      </div>
+
+      <div class="field">
+        <label class="label" for="micSelect">المايك</label>
+        <select id="micSelect" class="input"></select>
+        <div class="meter"><i id="micMeter"></i></div>
+      </div>
+
+      <div class="field toggles">
+        <label class="switch"><input type="checkbox" id="optNs"><i></i><span>عزل الضوضاء</span></label>
+        <label class="switch"><input type="checkbox" id="optEc"><i></i><span>منع الصدى</span></label>
+        <label class="switch"><input type="checkbox" id="optAgc"><i></i><span>ضبط مستوى الصوت تلقائياً</span></label>
+        <label class="switch"><input type="checkbox" id="optSounds"><i></i><span>أصوات التنبيه</span></label>
+      </div>
+
+      <p class="hint">اختصارات: <kbd>M</kbd> المايك · <kbd>D</kbd> كتم الصوت</p>
+
+      <div class="modal-foot">
+        <button type="button" class="btn btn-primary" data-close>تم</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
-  <script>
-  /* =====================================================
-     الإعدادات
-     ===================================================== */
-  const PREFIX = 'ghuraf26-'; // بادئة فريدة لأسماء الغرف على سيرفر PeerJS العام
-  const PRESETS = [
-    { id: 'diwaniya', name: 'الديوانية',     desc: 'سوالف وطقطقة',    icon: '☕' },
-    { id: 'gaming',   name: 'غرفة القيمنق',  desc: 'بث ألعاب 60 فريم', icon: '🎮' },
-    { id: 'cinema',   name: 'السينما',       desc: 'شوفوا شي سوا',     icon: '🎬' },
-    { id: 'study',    name: 'غرفة المذاكرة', desc: 'شغل وتركيز',       icon: '📚' },
-  ];
-  const RES = { 2160: [3840, 2160], 1440: [2560, 1440], 1080: [1920, 1080], 720: [1280, 720] };
-  const BITRATE = { 2160: 25_000_000, 1440: 14_000_000, 1080: 8_000_000, 720: 4_000_000 };
-  const PEER_OPTS = {
-    debug: 1,
-    config: {
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:global.stun.twilio.com:3478' },
-        // لو بعض الشبكات ما اتصلت، أضف سيرفر TURN هنا، مثال:
-        // { urls: 'turn:YOUR_TURN_SERVER:3478', username: 'user', credential: 'pass' },
-      ],
-    },
-  };
-
-  /* =====================================================
-     الحالة
-     ===================================================== */
-  let peer = null, myName = '', roomCode = '', isAnchor = false, triedAnchorAgain = false;
-  let micStream = null, micOn = true, hasMic = true;
-  let screenStream = null;
-  const members = new Map();       // peerId -> { name, conn, audioCall, audioEl, micOn, sharing, greeted }
-  const screenCalls = new Map();   // peerId -> المكالمة اللي أبث فيها شاشتي له
-  const remoteScreens = new Map(); // peerId -> { call, tile }
-
-  const $ = (id) => document.getElementById(id);
-
-  /* =====================================================
-     اللوبي
-     ===================================================== */
-  function renderRooms() {
-    $('roomsGrid').innerHTML = '';
-    for (const r of PRESETS) {
-      const b = document.createElement('button');
-      b.className = 'room-card';
-      b.innerHTML = `<div class="room-icon">${r.icon}</div>
-        <div class="room-title"></div><div class="room-desc"></div>
-        <div class="room-join">ادخل ←</div>`;
-      b.querySelector('.room-title').textContent = r.name;
-      b.querySelector('.room-desc').textContent = r.desc;
-      b.onclick = () => joinRoom(r.id);
-      $('roomsGrid').appendChild(b);
-    }
-  }
-
-  function cleanCode(s) {
-    return (s || '').toLowerCase().trim().replace(/\s+/g, '-').replace(/[^a-z0-9_-]/g, '').slice(0, 32);
-  }
-  function randomCode() {
-    const c = 'abcdefghjkmnpqrstuvwxyz23456789';
-    let s = '';
-    for (let i = 0; i < 7; i++) s += c[Math.floor(Math.random() * c.length)];
-    return s;
-  }
-  function roomLabel(code) {
-    const p = PRESETS.find((r) => r.id === code);
-    return p ? `${p.icon} ${p.name}` : `غرفة: ${code}`;
-  }
-
-  try { $('nameInput').value = localStorage.getItem('ghuraf-name') || ''; } catch (e) {}
-
-  $('joinCodeBtn').onclick = () => {
-    const code = cleanCode($('codeInput').value);
-    if (!code) return toast('اكتب رمز الغرفة (حروف إنجليزية أو أرقام)');
-    joinRoom(code);
-  };
-  $('codeInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('joinCodeBtn').click(); });
-  $('newRoomBtn').onclick = () => joinRoom(randomCode());
-
-  const invited = cleanCode(new URLSearchParams(location.search).get('room'));
-  if (invited) {
-    $('inviteBanner').classList.remove('hidden');
-    $('inviteRoom').textContent = roomLabel(invited);
-    $('inviteJoin').onclick = () => joinRoom(invited);
-    $('nameInput').focus();
-  }
-
-  /* =====================================================
-     الدخول للغرفة
-     ===================================================== */
-  async function joinRoom(code) {
-    myName = $('nameInput').value.trim();
-    if (!myName) { $('nameInput').focus(); return toast('اكتب اسمك أول'); }
-    try { localStorage.setItem('ghuraf-name', myName); } catch (e) {}
-    roomCode = code;
-
-    micStream = await getMic();
-
-    $('lobby').classList.add('hidden');
-    $('room').classList.remove('hidden');
-    $('roomTitle').textContent = roomLabel(code);
-    history.replaceState(null, '', `${location.pathname}?room=${encodeURIComponent(code)}`);
-    updateMicBtn();
-    renderMembers();
-    setStatus('wait', 'جاري الاتصال…');
-
-    if (!navigator.mediaDevices?.getDisplayMedia) {
-      $('shareBtn').disabled = true;
-      $('shareBtn').title = 'جهازك أو متصفحك ما يدعم مشاركة الشاشة';
-    }
-    tryAnchor();
-  }
-
-  async function getMic() {
-    try {
-      return await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      });
-    } catch (e) {
-      hasMic = false; micOn = false;
-      toast('ما قدرنا نوصل للمايك — تقدر تسمع وتكتب بس');
-      // مسار صوت صامت عشان المكالمات تشتغل
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      return ctx.createMediaStreamDestination().stream;
-    }
-  }
-
-  // أول واحد يدخل الغرفة يحجز اسمها ويصير "فاتح الغرفة"، والباقين يتصلون فيه
-  function tryAnchor() {
-    const p = new Peer(PREFIX + roomCode, PEER_OPTS);
-    p.on('open', () => {
-      peer = p; isAnchor = true;
-      setupPeer();
-      setStatus('ok', 'متصل — أنت فاتح الغرفة، ارسل الرابط لخويك');
-      sysMsg('فتحت الغرفة. انسخ رابط الدعوة وارسله لخويك 👋');
-    });
-    p.on('error', (err) => {
-      if (err.type === 'unavailable-id' && !peer) { p.destroy(); joinAsGuest(); }
-      else onPeerError(err);
-    });
-  }
-
-  function joinAsGuest() {
-    const p = new Peer(PEER_OPTS);
-    p.on('open', () => {
-      peer = p;
-      setupPeer();
-      setStatus('wait', 'جاري الدخول للغرفة…');
-      connectTo(PREFIX + roomCode);
-    });
-    p.on('error', onPeerError);
-  }
-
-  function onPeerError(err) {
-    console.warn('Peer error:', err.type, err);
-    if (err.type === 'peer-unavailable') {
-      // فاتح الغرفة طلع؟ نحاول نصير احنا الفاتح
-      if (members.size === 0 && !triedAnchorAgain && !isAnchor) {
-        triedAnchorAgain = true;
-        try { peer.destroy(); } catch (e) {}
-        peer = null;
-        tryAnchor();
-      }
-      return;
-    }
-    if (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error') {
-      setStatus('wait', 'انقطع الاتصال بالسيرفر… نحاول نرجع');
-    } else if (err.type === 'browser-incompatible') {
-      setStatus('', 'متصفحك ما يدعم الاتصال المباشر — جرب Chrome أو Edge');
-    } else if (!peer) {
-      setStatus('', 'صار خطأ بالاتصال: ' + err.type);
-    }
-  }
-
-  function setupPeer() {
-    peer.on('connection', (conn) => bindConn(conn, false));
-    peer.on('call', onIncomingCall);
-    peer.on('disconnected', () => {
-      setStatus('wait', 'انقطع… نعيد الاتصال');
-      if (!peer.destroyed) peer.reconnect();
-    });
-    peer.on('open', () => setStatus('ok', isAnchor ? 'متصل — أنت فاتح الغرفة' : 'متصل'));
-  }
-
-  /* =====================================================
-     الأعضاء والاتصالات (شبكة كاملة: الكل متصل بالكل)
-     ===================================================== */
-  function getMember(id) {
-    if (!members.has(id)) {
-      members.set(id, { name: '…', conn: null, audioCall: null, audioEl: null, micOn: true, sharing: false, greeted: false });
-    }
-    return members.get(id);
-  }
-
-  function connectTo(id) {
-    if (!peer || id === peer.id || members.get(id)?.conn) return;
-    const conn = peer.connect(id, { reliable: true, metadata: { name: myName } });
-    getMember(id).conn = conn;
-    bindConn(conn, true);
-  }
-
-  function bindConn(conn, outgoing) {
-    conn.on('open', () => {
-      const m = getMember(conn.peer);
-      m.conn = conn;
-      if (conn.metadata?.name && !outgoing) m.name = conn.metadata.name;
-      conn.send({ t: 'hello', name: myName, micOn, sharing: !!screenStream });
-
-      // فاتح الغرفة يعطي الجديد قائمة الموجودين عشان يتصل فيهم
-      if (isAnchor) conn.send({ t: 'peers', list: [...members.keys()].filter((x) => x !== conn.peer) });
-
-      // الجديد هو اللي يبدأ مكالمة الصوت (مكالمة وحدة لكل اثنين)
-      if (outgoing) callAudio(conn.peer);
-
-      // لو أنا أبث، أرسل البث للجديد
-      if (screenStream) sendScreenTo(conn.peer);
-
-      if (!outgoing || !isAnchor) setStatus('ok', isAnchor ? 'متصل — أنت فاتح الغرفة' : 'متصل');
-      renderMembers();
-    });
-    conn.on('data', (d) => onData(conn.peer, d));
-    conn.on('close', () => removeMember(conn.peer));
-    conn.on('error', (e) => console.warn('conn error', e));
-  }
-
-  function onData(id, d) {
-    if (!d || typeof d !== 'object') return;
-    const m = getMember(id);
-    switch (d.t) {
-      case 'hello':
-        m.name = String(d.name || 'ضيف').slice(0, 24);
-        m.micOn = !!d.micOn;
-        m.sharing = !!d.sharing;
-        if (!m.greeted) { m.greeted = true; sysMsg(`${m.name} دخل الغرفة`); }
-        renderMembers();
-        break;
-      case 'peers':
-        (d.list || []).forEach(connectTo);
-        break;
-      case 'chat':
-        addMsg(m.name, String(d.text || '').slice(0, 500), false);
-        break;
-      case 'mic':
-        m.micOn = !!d.on; renderMembers();
-        break;
-      case 'screen-start':
-        m.sharing = true; renderMembers();
-        break;
-      case 'screen-stop':
-        m.sharing = false; removeRemoteScreen(id); renderMembers();
-        break;
-    }
-  }
-
-  function broadcast(obj) {
-    for (const m of members.values()) if (m.conn?.open) m.conn.send(obj);
-  }
-
-  function removeMember(id) {
-    const m = members.get(id);
-    if (!m) return;
-    try { m.audioCall?.close(); } catch (e) {}
-    if (m.audioEl) { m.audioEl.pause(); m.audioEl.srcObject = null; m.audioEl.remove(); }
-    try { screenCalls.get(id)?.close(); } catch (e) {}
-    screenCalls.delete(id);
-    removeRemoteScreen(id);
-    members.delete(id);
-    if (m.greeted) sysMsg(`${m.name} طلع من الغرفة`);
-    renderMembers();
-  }
-
-  /* =====================================================
-     الصوت
-     ===================================================== */
-  function callAudio(id) {
-    const call = peer.call(id, micStream, { metadata: { kind: 'audio', name: myName } });
-    attachAudioCall(id, call);
-  }
-
-  function attachAudioCall(id, call) {
-    const m = getMember(id);
-    m.audioCall = call;
-    call.on('stream', (s) => {
-      if (!m.audioEl) {
-        m.audioEl = document.createElement('audio');
-        m.audioEl.autoplay = true;
-        m.audioEl.playsInline = true;
-        document.body.appendChild(m.audioEl);
-      }
-      if (m.audioEl.srcObject !== s) {
-        m.audioEl.srcObject = s;
-        m.audioEl.play().catch(() => toast('اضغط بأي مكان بالصفحة عشان يشتغل الصوت'));
-      }
-    });
-    call.on('error', (e) => console.warn('audio call error', e));
-  }
-
-  function onIncomingCall(call) {
-    if (call.metadata?.kind === 'screen') {
-      call.answer(); // نستقبل البث بس
-      call.on('stream', (s) => showRemoteScreen(call.peer, s, call));
-      call.on('close', () => removeRemoteScreen(call.peer));
-      call.on('error', () => removeRemoteScreen(call.peer));
-    } else {
-      call.answer(micStream);
-      attachAudioCall(call.peer, call);
-    }
-  }
-
-  // إعادة تشغيل الصوت لو المتصفح منعه
-  document.addEventListener('click', () => {
-    for (const m of members.values()) if (m.audioEl?.paused) m.audioEl.play().catch(() => {});
-  });
-
-  $('micBtn').onclick = () => {
-    if (!hasMic) return toast('ما فيه مايك متاح');
-    micOn = !micOn;
-    micStream.getAudioTracks().forEach((t) => (t.enabled = micOn));
-    broadcast({ t: 'mic', on: micOn });
-    updateMicBtn();
-    renderMembers();
-  };
-
-  function updateMicBtn() {
-    const b = $('micBtn');
-    b.classList.toggle('off', !micOn);
-    b.innerHTML = micOn ? '🎙️ <span class="txt">المايك شغال</span>' : '🔇 <span class="txt">المايك مقفل</span>';
-  }
-
-  /* =====================================================
-     بث الشاشة
-     ===================================================== */
-  $('shareBtn').onclick = () => (screenStream ? stopShare() : startShare());
-
-  async function startShare() {
-    const q = $('resSelect').value;
-    const fps = +$('fpsSelect').value;
-    const [w, h] = RES[q];
-    try {
-      screenStream = await navigator.mediaDevices.getDisplayMedia({
-        video: { width: { ideal: w }, height: { ideal: h }, frameRate: { ideal: fps, max: fps } },
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }, // صوت التبويب/النظام لو متاح
-        systemAudio: 'include',
-        selfBrowserSurface: 'exclude',
-      });
-    } catch (e) {
-      screenStream = null;
-      if (e.name !== 'NotAllowedError') toast('ما قدرنا نبدأ البث: ' + e.message);
-      return;
-    }
-
-    const vt = screenStream.getVideoTracks()[0];
-    // motion = يحافظ على السلاسة (ألعاب)، detail = يحافظ على الوضوح (نصوص وأفلام)
-    vt.contentHint = fps >= 60 ? 'motion' : 'detail';
-    vt.addEventListener('ended', stopShare); // لو وقف البث من شريط المتصفح
-
-    addTile('me', screenStream, 'شاشتك (معاينة)', true);
-    broadcast({ t: 'screen-start' });
-    for (const [id, m] of members) if (m.conn?.open) sendScreenTo(id);
-
-    const b = $('shareBtn');
-    b.classList.add('live');
-    b.innerHTML = '⏹️ <span class="txt">وقف البث</span>';
-    $('resSelect').disabled = $('fpsSelect').disabled = true;
-
-    const st = vt.getSettings();
-    toast(`بدأ البث: ${st.width || '?'}×${st.height || '?'} @ ${Math.round(st.frameRate || fps)} فريم`);
-    renderMembers();
-  }
-
-  function sendScreenTo(id) {
-    if (!screenStream || screenCalls.has(id)) return;
-    const call = peer.call(id, screenStream, { metadata: { kind: 'screen', name: myName } });
-    screenCalls.set(id, call);
-    call.on('close', () => screenCalls.delete(id));
-    boostQuality(call);
-  }
-
-  // نرفع حد البت ريت عشان 4K تطلع نظيفة (المتصفح افتراضياً يحدها على ~2.5Mbps)
-  function boostQuality(call) {
-    const q = $('resSelect').value;
-    const fps = +$('fpsSelect').value;
-    let done = false;
-    const apply = async () => {
-      const pc = call.peerConnection;
-      if (!pc || done) return;
-      for (const s of pc.getSenders()) {
-        if (s.track?.kind !== 'video') continue;
-        const p = s.getParameters();
-        if (!p.encodings || !p.encodings.length) p.encodings = [{}];
-        p.encodings[0].maxBitrate = BITRATE[q];
-        p.encodings[0].maxFramerate = fps;
-        p.encodings[0].scaleResolutionDownBy = 1;
-        try { await s.setParameters(p); done = true; } catch (e) { console.warn('setParameters', e); }
-      }
-    };
-    const wait = setInterval(() => {
-      const pc = call.peerConnection;
-      if (!pc) return;
-      if (pc.connectionState === 'connected') { apply(); clearInterval(wait); }
-      if (['failed', 'closed'].includes(pc.connectionState)) clearInterval(wait);
-    }, 500);
-    setTimeout(() => clearInterval(wait), 30000);
-  }
-
-  function stopShare() {
-    if (!screenStream) return;
-    screenStream.getTracks().forEach((t) => t.stop());
-    screenStream = null;
-    for (const c of screenCalls.values()) { try { c.close(); } catch (e) {} }
-    screenCalls.clear();
-    broadcast({ t: 'screen-stop' });
-    removeTile('me');
-
-    const b = $('shareBtn');
-    b.classList.remove('live');
-    b.innerHTML = '🖥️ <span class="txt">بث الشاشة</span>';
-    $('resSelect').disabled = $('fpsSelect').disabled = false;
-    renderMembers();
-  }
-
-  function showRemoteScreen(id, stream, call) {
-    const m = getMember(id);
-    m.sharing = true;
-    const tile = addTile('r-' + id, stream, `شاشة ${m.name}`, false);
-    remoteScreens.set(id, { call, tile });
-    renderMembers();
-  }
-
-  function removeRemoteScreen(id) {
-    const r = remoteScreens.get(id);
-    if (!r) return;
-    try { r.call.close(); } catch (e) {}
-    removeTile('r-' + id);
-    remoteScreens.delete(id);
-  }
-
-  /* ---------- مربعات البث ---------- */
-  function addTile(key, stream, label, muted) {
-    let tile = document.querySelector(`.tile[data-key="${key}"]`);
-    if (!tile) {
-      tile = document.createElement('div');
-      tile.className = 'tile';
-      tile.dataset.key = key;
-      tile.innerHTML = `
-        <video autoplay playsinline></video>
-        <span class="tile-res"></span>
-        <span class="tile-label"></span>
-        <div class="tile-actions">
-          <button class="tile-btn" data-a="sound" title="الصوت">🔊</button>
-          <button class="tile-btn" data-a="fs" title="ملء الشاشة">⛶</button>
-        </div>`;
-      const v = tile.querySelector('video');
-      tile.querySelector('[data-a="fs"]').onclick = () => {
-        if (document.fullscreenElement) document.exitFullscreen();
-        else (tile.requestFullscreen || tile.webkitRequestFullscreen)?.call(tile);
-      };
-      const sb = tile.querySelector('[data-a="sound"]');
-      if (muted) sb.remove();
-      else sb.onclick = () => { v.muted = !v.muted; sb.textContent = v.muted ? '🔇' : '🔊'; };
-      tile.addEventListener('dblclick', () => tile.querySelector('[data-a="fs"]').click());
-
-      // عرض الدقة الفعلية اللي توصل
-      const resEl = tile.querySelector('.tile-res');
-      const upd = () => { if (v.videoWidth) resEl.textContent = resName(v.videoHeight); };
-      v.addEventListener('resize', upd);
-      v.addEventListener('loadedmetadata', upd);
-
-      $('stage').appendChild(tile);
-    }
-    const v = tile.querySelector('video');
-    v.muted = muted;
-    if (v.srcObject !== stream) v.srcObject = stream;
-    v.play().catch(() => {});
-    tile.querySelector('.tile-label').textContent = label;
-    layoutStage();
-    return tile;
-  }
-
-  function removeTile(key) {
-    const t = document.querySelector(`.tile[data-key="${key}"]`);
-    if (t) { t.querySelector('video').srcObject = null; t.remove(); }
-    layoutStage();
-  }
-
-  function resName(h) {
-    if (h >= 2000) return '4K';
-    if (h >= 1400) return '2K';
-    if (h >= 1000) return '1080p';
-    if (h >= 700) return '720p';
-    return h + 'p';
-  }
-
-  function layoutStage() {
-    const n = document.querySelectorAll('#stage .tile').length;
-    const st = $('stage');
-    st.classList.remove('count-1', 'count-2', 'count-many');
-    if (n === 1) st.classList.add('count-1');
-    else if (n === 2) st.classList.add('count-2');
-    else if (n > 2) st.classList.add('count-many');
-    $('emptyStage').classList.toggle('hidden', n > 0);
-  }
-
-  /* =====================================================
-     قائمة الأعضاء
-     ===================================================== */
-  function colorFor(name) {
-    let h = 0;
-    for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) % 360;
-    return `hsl(${h} 55% 45%)`;
-  }
-
-  function renderMembers() {
-    const list = $('memberList');
-    list.innerHTML = '';
-    const all = [{ name: myName + ' (أنت)', micOn, sharing: !!screenStream, raw: myName }];
-    for (const m of members.values()) if (m.conn?.open) all.push({ name: m.name, micOn: m.micOn, sharing: m.sharing, raw: m.name });
-    for (const u of all) {
-      const row = document.createElement('div');
-      row.className = 'member';
-      row.innerHTML = `<div class="avatar"></div><div class="member-name"></div><div class="member-tags"></div>`;
-      const av = row.querySelector('.avatar');
-      av.textContent = (u.raw || '?').trim().charAt(0) || '?';
-      av.style.background = colorFor(u.raw || '?');
-      row.querySelector('.member-name').textContent = u.name;
-      row.querySelector('.member-tags').innerHTML =
-        (u.sharing ? '<span class="tag-live">● يبث</span>' : '') + (u.micOn ? '🎙️' : '🔇');
-      list.appendChild(row);
-    }
-    $('memberCount').textContent = all.length;
-  }
-
-  /* =====================================================
-     الدردشة
-     ===================================================== */
-  $('chatForm').onsubmit = (e) => {
-    e.preventDefault();
-    const text = $('chatInput').value.trim();
-    if (!text) return;
-    broadcast({ t: 'chat', text });
-    addMsg(myName, text, true);
-    $('chatInput').value = '';
-  };
-
-  function addMsg(who, text, me) {
-    const el = document.createElement('div');
-    el.className = 'msg' + (me ? ' me' : '');
-    const t = new Date().toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' });
-    el.innerHTML = `<div class="who"></div><div class="body"></div><div class="time"></div>`;
-    el.querySelector('.who').textContent = me ? 'أنت' : who;
-    el.querySelector('.body').textContent = text;
-    el.querySelector('.time').textContent = t;
-    pushMsg(el);
-  }
-
-  function sysMsg(text) {
-    const el = document.createElement('div');
-    el.className = 'msg sys';
-    el.textContent = text;
-    pushMsg(el);
-  }
-
-  function pushMsg(el) {
-    const box = $('messages');
-    const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
-    box.appendChild(el);
-    if (nearBottom) box.scrollTop = box.scrollHeight;
-  }
-
-  /* =====================================================
-     أدوات
-     ===================================================== */
-  function setStatus(kind, text) {
-    $('statusDot').className = 'dot ' + (kind || '');
-    $('statusText').textContent = text;
-  }
-
-  let toastTimer;
-  function toast(text) {
-    document.querySelector('.toast')?.remove();
-    const el = document.createElement('div');
-    el.className = 'toast';
-    el.textContent = text;
-    document.body.appendChild(el);
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.remove(), 3200);
-  }
-
-  $('copyLinkBtn').onclick = async () => {
-    const url = `${location.origin}${location.pathname}?room=${encodeURIComponent(roomCode)}`;
-    try { await navigator.clipboard.writeText(url); toast('انسخ الرابط ✅ ارسله لخويك'); }
-    catch (e) { prompt('انسخ الرابط:', url); }
-  };
-
-  $('leaveBtn').onclick = leave;
-  function leave() {
-    stopShare();
-    micStream?.getTracks().forEach((t) => t.stop());
-    try { peer?.destroy(); } catch (e) {}
-    location.href = location.pathname;
-  }
-  window.addEventListener('beforeunload', () => { try { peer?.destroy(); } catch (e) {} });
-
-  renderRooms();
-  </script>
+  <script src="app.js"></script>
 </body>
 </html>
