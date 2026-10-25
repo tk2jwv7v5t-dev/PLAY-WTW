@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>PLAY WTW — Play with me and talk with me</title>
+  <meta name="description" content="قروبات ورومات صوت وشات وبث شاشة لين 4K مع أصحابك.">
+  <meta name="theme-color" content="#0a0b0f">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%236c63ff'/%3E%3Cpath d='M24 18l24 14-24 14z' fill='white'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+  <!-- ================= الشاشة الافتتاحية ================= -->
+  <section id="intro" class="intro">
+    <canvas id="introFx" aria-hidden="true"></canvas>
+    <div class="intro-glow" aria-hidden="true"></div>
+    <div class="intro-center">
+      <h1 id="logoAnim" class="logo-anim" dir="ltr" aria-label="PLAY WITH ME AND TALK WITH ME">
+        <span class="w"><span class="k">P</span><span class="k">L</span><span class="k">A</span><span class="k">Y</span></span>
+        <span class="w t"><span class="k">W</span><span class="x">ITH</span></span>
+        <span class="w t z"><span class="x">ME</span></span>
+        <span class="br" aria-hidden="true"></span>
+        <span class="w t z"><span class="x">AND</span></span>
+        <span class="w t"><span class="k">T</span><span class="x">ALK</span></span>
+        <span class="w t"><span class="k">W</span><span class="x">ITH</span></span>
+        <span class="w t z"><span class="x">ME</span></span>
+      </h1>
+      <p class="intro-sub">قروبات · رومات صوت · شات · بث شاشة لين 4K</p>
+      <button id="introGo" class="btn btn-primary btn-xl intro-go" type="button">
+        <span id="introGoText">انتقل لتسجيل الدخول</span>
+        <span class="arrow" aria-hidden="true">←</span>
+      </button>
+    </div>
+    <p class="intro-hint">حرّك الماوس · اضغط على الشعار يعيد الحركة</p>
+  </section>
+
+  <!-- ================= تسجيل الدخول ================= -->
+  <section id="auth" class="auth hidden">
+    <div class="auth-card surface">
+      <div class="auth-brand"><div class="brand-mark"></div><span>PLAY WTW</span></div>
+      <div class="auth-tabs" role="tablist">
+        <button class="auth-tab active" type="button" data-mode="login" role="tab">تسجيل الدخول</button>
+        <button class="auth-tab" type="button" data-mode="register" role="tab">حساب جديد</button>
+      </div>
+      <form id="authForm" class="auth-form" novalidate>
+        <h2 id="authTitle">هلا بعودتك 👋</h2>
+        <p id="authSub" class="muted">سجّل دخولك وكمّل سوالفك.</p>
+
+        <label class="field">
+          <span class="label">اسم المستخدم</span>
+          <input id="authUser" class="input" dir="ltr" autocomplete="username" autocapitalize="off" spellcheck="false" maxlength="20" required>
+        </label>
+        <label class="field reg-only hidden">
+          <span class="label">الاسم اللي يظهر للناس <small>(اختياري، يقبل عربي)</small></span>
+          <input id="authDisplay" class="input" maxlength="32" autocomplete="nickname">
+        </label>
+        <label class="field">
+          <span class="label">كلمة المرور</span>
+          <span class="pw">
+            <input id="authPass" class="input" type="password" dir="ltr" autocomplete="current-password" maxlength="128" required>
+            <button id="pwToggle" class="pw-toggle" type="button" aria-label="إظهار كلمة المرور" data-icon="eye"></button>
+          </span>
+        </label>
+        <p class="hint reg-only hidden">اسم المستخدم: 3–20 حرف إنجليزي صغير أو أرقام أو _ . — كلمة المرور 8 أحرف أو أكثر.</p>
+        <p id="authError" class="form-error" role="alert"></p>
+        <button id="authSubmit" class="btn btn-primary btn-lg" type="submit">دخول</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- ================= التطبيق ================= -->
+  <div id="app" class="app hidden">
+    <!-- شريط القروبات -->
+    <nav class="rail" aria-label="القروبات">
+      <button id="homeBtn" class="rail-btn home" type="button" title="PLAY WTW"><span class="brand-mark sm"></span></button>
+      <div class="rail-sep"></div>
+      <div id="serverList" class="server-list"></div>
+      <button id="addServerBtn" class="rail-btn add" type="button" title="سوّ قروب أو ادخل واحد" data-icon="plus"></button>
+    </nav>
+
+    <!-- قائمة الرومات -->
+    <aside class="sidebar">
+      <header class="server-head">
+        <button id="serverHeadBtn" class="server-head-btn" type="button">
+          <span id="serverName">PLAY WTW</span><span data-icon="chevron"></span>
+        </button>
+        <div id="serverMenu" class="menu hidden" role="menu">
+          <button type="button" data-act="invite"><span data-icon="userPlus"></span>دعوة أصحابك</button>
+          <button type="button" data-act="newText" class="owner-only"><span data-icon="hash"></span>روم كتابي جديد</button>
+          <button type="button" data-act="newVoice" class="owner-only"><span data-icon="volume"></span>روم صوتي جديد</button>
+          <button type="button" data-act="rename" class="owner-only"><span data-icon="edit"></span>تعديل القروب</button>
+          <div class="menu-sep"></div>
+          <button type="button" data-act="leave" class="danger not-owner"><span data-icon="logOut"></span>اطلع من القروب</button>
+          <button type="button" data-act="delete" class="danger owner-only"><span data-icon="trash"></span>احذف القروب</button>
+        </div>
+      </header>
+
+      <div id="channelList" class="channel-list"></div>
+
+      <div id="voicePanel" class="voice-panel hidden">
+        <div class="vp-info">
+          <div class="vp-status"><i class="dot on"></i><span>متصل بالصوت</span></div>
+          <button id="vpChannel" class="vp-channel" type="button"></button>
+        </div>
+        <button id="vpShare" class="icon-btn" type="button" title="بث الشاشة" data-icon="monitor"></button>
+        <button id="vpLeave" class="icon-btn danger" type="button" title="اطلع من الصوت" data-icon="phoneOff"></button>
+      </div>
+
+      <div class="user-panel">
+        <div id="meAvatar" class="avatar-wrap"></div>
+        <div class="up-names">
+          <b id="meDisplay"></b>
+          <small id="meUser" dir="ltr"></small>
+        </div>
+        <button id="micBtn" class="icon-btn ghost" type="button" title="المايك (M)"></button>
+        <button id="deafBtn" class="icon-btn ghost" type="button" title="كتم الصوت (D)"></button>
+        <button id="settingsBtn" class="icon-btn ghost" type="button" title="الإعدادات" data-icon="cog"></button>
+      </div>
+    </aside>
+
+    <!-- المحتوى -->
+    <main class="main">
+      <header class="main-head">
+        <button id="navToggle" class="icon-btn ghost only-mobile" type="button" aria-label="القائمة" data-icon="menu"></button>
+        <span id="chanIcon" class="chan-icon"></span>
+        <b id="chanName"></b>
+        <span id="chanTopic" class="muted chan-topic"></span>
+        <span class="spacer"></span>
+        <button id="membersToggle" class="icon-btn ghost" type="button" title="الأعضاء" data-icon="users"></button>
+      </header>
+
+      <section id="emptyView" class="empty-view">
+        <div class="empty-card">
+          <div class="brand-mark lg"></div>
+          <h2>هلا فيك في PLAY WTW</h2>
+          <p class="muted">سوّ قروب لك ولأصحابك، أو ادخل قروب بكود الدعوة.</p>
+          <div class="empty-actions">
+            <button id="emptyCreate" class="btn btn-primary" type="button">سوّ قروب</button>
+            <button id="emptyJoin" class="btn btn-soft" type="button">ادخل بكود دعوة</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="textView" class="text-view hidden">
+        <div id="messages" class="messages" aria-live="polite"></div>
+        <div id="typing" class="typing"></div>
+        <form id="composer" class="composer">
+          <textarea id="msgInput" class="composer-input" rows="1" maxlength="2000" placeholder="اكتب رسالة…"></textarea>
+          <button class="icon-btn accent" type="submit" aria-label="ارسال" data-icon="send"></button>
+        </form>
+      </section>
+
+      <section id="voiceView" class="voice-view hidden">
+        <div id="stage" class="stage">
+          <div id="screens" class="screens"></div>
+          <div id="tiles" class="tiles"></div>
+        </div>
+        <div id="voiceJoin" class="voice-join hidden">
+          <div class="vj-icon" data-icon="volume"></div>
+          <h3 id="vjTitle"></h3>
+          <p id="vjSub" class="muted"></p>
+          <button id="vjBtn" class="btn btn-primary btn-lg" type="button">ادخل الروم الصوتي</button>
+        </div>
+        <nav id="dock" class="dock hidden" aria-label="التحكم">
+          <button id="dMic" class="dock-btn" type="button" title="المايك"></button>
+          <button id="dDeaf" class="dock-btn" type="button" title="كتم الصوت"></button>
+          <div class="split">
+            <button id="dShare" class="dock-btn" type="button" title="بث الشاشة"></button>
+            <button id="dShareCfg" class="dock-btn mini" type="button" title="جودة البث" data-icon="sliders"></button>
+          </div>
+          <button id="dLeave" class="dock-btn danger" type="button" title="اطلع من الصوت" data-icon="phoneOff"></button>
+        </nav>
+      </section>
+    </main>
+
+    <!-- الأعضاء -->
+    <aside id="membersPanel" class="members-panel">
+      <div id="membersList"></div>
+    </aside>
+
+    <div id="scrim" class="scrim" aria-hidden="true"></div>
+  </div>
+
+  <!-- ================= النوافذ ================= -->
+  <div id="serverModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="serverModalTitle">
+    <div class="modal-card">
+      <div class="modal-head"><h3 id="serverModalTitle">قروب جديد</h3><button type="button" class="icon-btn ghost sm" data-close aria-label="سكّر" data-icon="x"></button></div>
+      <div class="seg-tabs">
+        <button type="button" class="active" data-pane="create">سوّ قروب</button>
+        <button type="button" data-pane="join">ادخل بكود</button>
+      </div>
+      <form id="createServerForm" class="pane" data-pane="create">
+        <div class="icon-picker" id="iconPicker"></div>
+        <label class="field"><span class="label">اسم القروب</span><input name="name" class="input" maxlength="40" required placeholder="مثال: شلة الويكند"></label>
+        <div class="modal-foot"><button class="btn btn-primary" type="submit">سوّه</button></div>
+      </form>
+      <form id="joinServerForm" class="pane hidden" data-pane="join">
+        <label class="field"><span class="label">كود الدعوة أو الرابط</span><input name="invite" class="input" dir="ltr" required placeholder="aB3dEf7h"></label>
+        <div class="modal-foot"><button class="btn btn-primary" type="submit">ادخل</button></div>
+      </form>
+    </div>
+  </div>
+
+  <div id="channelModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="channelModalTitle">
+    <form id="channelForm" class="modal-card">
+      <div class="modal-head"><h3 id="channelModalTitle">روم جديد</h3><button type="button" class="icon-btn ghost sm" data-close aria-label="سكّر" data-icon="x"></button></div>
+      <div class="kind-pick">
+        <label><input type="radio" name="kind" value="text" checked><span><i data-icon="hash"></i><b>كتابي</b><small>رسايل وصور وروابط</small></span></label>
+        <label><input type="radio" name="kind" value="voice"><span><i data-icon="volume"></i><b>صوتي</b><small>سوالف وبث شاشة</small></span></label>
+      </div>
+      <label class="field"><span class="label">اسم الروم</span><input name="name" class="input" maxlength="32" required></label>
+      <div class="modal-foot"><button type="button" class="btn btn-soft" data-close>إلغاء</button><button class="btn btn-primary" type="submit">سوّ الروم</button></div>
+    </form>
+  </div>
+
+  <div id="renameModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="renameTitle">
+    <form id="renameForm" class="modal-card">
+      <div class="modal-head"><h3 id="renameTitle">تعديل القروب</h3><button type="button" class="icon-btn ghost sm" data-close aria-label="سكّر" data-icon="x"></button></div>
+      <div class="icon-picker" id="iconPicker2"></div>
+      <label class="field"><span class="label">اسم القروب</span><input name="name" class="input" maxlength="40" required></label>
+      <div class="modal-foot"><button type="button" class="btn btn-soft" data-close>إلغاء</button><button class="btn btn-primary" type="submit">حفظ</button></div>
+    </form>
+  </div>
+
+  <div id="inviteModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="inviteTitle">
+    <div class="modal-card">
+      <div class="modal-head"><h3 id="inviteTitle">ادعُ أصحابك</h3><button type="button" class="icon-btn ghost sm" data-close aria-label="سكّر" data-icon="x"></button></div>
+      <p class="muted">ارسل لهم الرابط. لازم يكون عندهم حساب، وإذا ما عندهم يسوون واحد.</p>
+      <div class="copy-row"><input id="inviteLink" class="input" dir="ltr" readonly><button id="inviteCopy" class="btn btn-primary" type="button">نسخ</button></div>
+      <p class="hint">كود الدعوة: <b id="inviteCode" dir="ltr"></b></p>
+    </div>
+  </div>
+
+  <div id="confirmModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+    <div class="modal-card narrow">
+      <h3 id="confirmTitle"></h3>
+      <p id="confirmText" class="muted"></p>
+      <div class="modal-foot"><button type="button" class="btn btn-soft" data-close>إلغاء</button><button id="confirmOk" class="btn btn-danger" type="button">تأكيد</button></div>
+    </div>
+  </div>
+
+  <div id="shareModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="shareTitle">
+    <form id="shareForm" class="modal-card wide">
+      <div class="modal-head"><h3 id="shareTitle">جودة بث الشاشة</h3><button type="button" class="icon-btn ghost sm" data-close aria-label="سكّر" data-icon="x"></button></div>
+      <div class="field"><span class="label">إعدادات جاهزة</span><div id="presets" class="presets"></div></div>
+      <div class="field"><span class="label">الدقة</span>
+        <div class="seg">
+          <label><input type="radio" name="res" value="720"><span>720p</span></label>
+          <label><input type="radio" name="res" value="1080"><span>1080p</span></label>
+          <label><input type="radio" name="res" value="1440"><span>1440p 2K</span></label>
+          <label><input type="radio" name="res" value="2160"><span>2160p 4K</span></label>
+          <label><input type="radio" name="res" value="native"><span>دقة شاشتي</span></label>
+        </div>
+      </div>
+      <div class="field"><span class="label">الفريمات (FPS)</span>
+        <div class="seg">
+          <label><input type="radio" name="fps" value="15"><span>15</span></label>
+          <label><input type="radio" name="fps" value="30"><span>30</span></label>
+          <label><input type="radio" name="fps" value="60"><span>60</span></label>
+          <label><input type="radio" name="fps" value="90"><span>90</span></label>
+          <label><input type="radio" name="fps" value="120"><span>120</span></label>
+          <label><input type="radio" name="fps" value="144"><span>144</span></label>
+        </div>
+      </div>
+      <div class="field"><span class="label">وش بتبث؟</span>
+        <div class="seg">
+          <label><input type="radio" name="mode" value="detail"><span>نصوص وكود (أوضح)</span></label>
+          <label><input type="radio" name="mode" value="balanced"><span>متوازن</span></label>
+          <label><input type="radio" name="mode" value="motion"><span>ألعاب وأفلام (أنعم)</span></label>
+        </div>
+      </div>
+      <div class="field"><span class="label">البت ريت <b id="brVal" dir="ltr"></b></span>
+        <label class="switch"><input type="checkbox" id="brAuto"><i></i><span>تلقائي حسب الدقة والفريمات</span></label>
+        <input id="brRange" type="range" min="1" max="80" step="1" aria-label="البت ريت بالميقابت">
+        <p id="brHint" class="hint"></p>
+      </div>
+      <label class="switch"><input type="checkbox" id="shareAudio"><i></i><span>بث صوت الجهاز / التاب مع الشاشة</span></label>
+      <p class="hint">إذا البث يقطّع، نزّل الفريمات أو الدقة أو البت ريت. الدقة ما تطلع أعلى من دقة شاشتك.</p>
+      <div class="modal-foot"><button type="button" class="btn btn-soft" data-close>إلغاء</button><button id="shareSubmit" class="btn btn-primary" type="submit">ابدأ البث</button></div>
+    </form>
+  </div>
+
+  <div id="settingsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <div class="modal-card wide settings">
+      <div class="modal-head"><h3 id="settingsTitle">الإعدادات</h3><button type="button" class="icon-btn ghost sm" data-close aria-label="سكّر" data-icon="x"></button></div>
+      <div class="seg-tabs">
+        <button type="button" class="active" data-pane="voice">الصوت والمايك</button>
+        <button type="button" data-pane="profile">حسابي</button>
+      </div>
+
+      <div class="pane" data-pane="voice">
+        <div class="grid-2">
+          <label class="field"><span class="label">المايك</span><select id="inDevice" class="input"></select></label>
+          <label class="field"><span class="label">السماعة</span><select id="outDevice" class="input"></select></label>
+        </div>
+
+        <div class="field">
+          <span class="label">عزل الضوضاء</span>
+          <div class="seg">
+            <label><input type="radio" name="ns" value="gtcrn"><span>ذكاء اصطناعي قوي</span></label>
+            <label><input type="radio" name="ns" value="rnnoise"><span>ذكاء اصطناعي خفيف</span></label>
+            <label><input type="radio" name="ns" value="browser"><span>المتصفح</span></label>
+            <label><input type="radio" name="ns" value="off"><span>مقفل</span></label>
+          </div>
+          <p id="nsHint" class="hint"></p>
+        </div>
+
+        <div class="field">
+          <span class="label">حساسية المايك</span>
+          <label class="switch"><input type="checkbox" id="gateAuto"><i></i><span>تحديد تلقائي</span></label>
+          <div class="gate-meter">
+            <div class="gm-bar"><i id="gateLevel"></i></div>
+            <input id="gateRange" type="range" min="-80" max="-10" step="1" aria-label="حد فتح المايك بالديسيبل">
+          </div>
+          <p class="hint">إذا الشريط تحت الخط الأبيض، صوتك ما يوصل. حرّك الخط لين ما يفتح المايك إلا وانت تتكلم.</p>
+        </div>
+
+        <div class="grid-2">
+          <label class="field"><span class="label">مستوى المايك <b id="inVolVal" dir="ltr"></b></span><input id="inVol" type="range" min="0" max="200" step="5"></label>
+          <label class="field"><span class="label">مستوى الصوت <b id="outVolVal" dir="ltr"></b></span><input id="outVol" type="range" min="0" max="100" step="5"></label>
+        </div>
+
+        <div class="field toggles">
+          <label class="switch"><input type="checkbox" id="optEc"><i></i><span>منع الصدى</span></label>
+          <label class="switch"><input type="checkbox" id="optAgc"><i></i><span>ضبط مستوى المايك تلقائياً</span></label>
+          <label class="switch"><input type="checkbox" id="optSounds"><i></i><span>أصوات التنبيه</span></label>
+        </div>
+
+        <div class="mic-test">
+          <button id="micTest" class="btn btn-soft" type="button">جرّب المايك</button>
+          <span class="hint">تسمع صوتك بعد المعالجة. استخدم سماعة عشان ما يصير صدى.</span>
+        </div>
+      </div>
+
+      <div class="pane hidden" data-pane="profile">
+        <form id="profileForm" class="profile-form">
+          <div class="profile-preview"><div id="profileAvatar"></div><div><b id="profileName"></b><small id="profileUser" dir="ltr"></small></div></div>
+          <label class="field"><span class="label">الاسم اللي يظهر</span><input id="profileDisplay" class="input" maxlength="32" required></label>
+          <label class="field"><span class="label">لون الصورة</span><input id="profileHue" type="range" min="0" max="359"></label>
+          <div class="modal-foot"><button id="logoutBtn" class="btn btn-danger-soft" type="button">تسجيل الخروج</button><span class="spacer"></span><button class="btn btn-primary" type="submit">حفظ</button></div>
+        </form>
+      </div>
+
+      <p class="hint">اختصارات: <kbd>M</kbd> المايك · <kbd>D</kbd> كتم الصوت</p>
+    </div>
+  </div>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>
