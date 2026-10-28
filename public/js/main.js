@@ -20,7 +20,7 @@ const NS_LABEL = { gtcrn: 'ذكاء اصطناعي قوي', rnnoise: 'ذكاء �
 
 const settings = Object.assign({
   inDevice: '', outDevice: '', ns: 'rnnoise', gateAuto: true, gateDb: -50,
-  inVol: 100, outVol: 100, ec: true, agc: true, sounds: true, userVol: {},
+  inVol: 100, outVol: 100, ec: true, agc: true, sounds: true, userVol: {}, userMute: {},
 }, store.get('settings', {}));
 const shareCfg = Object.assign({ res: '1080', fps: 60, mode: 'balanced', brAuto: true, br: 12, audio: true }, store.get('share', {}));
 const saveSettings = () => store.set('settings', settings);
@@ -46,6 +46,8 @@ const S = {
   tiles: new Map(),     // sid -> عنصر البث
   lastTypingSent: 0,
   invite: new URLSearchParams(location.search).get('invite'),
+  viewPref: new Map(),  // sid -> الجودة اللي اخترتها لبثه
+  popAnchor: null,
 };
 const mic = new MicPipeline();
 const levels = new LevelWatcher((id, sp) => {
@@ -400,9 +402,9 @@ function channelRow(c) {
     const u = userOf(v.uid);
     const me = v.sid === S.sid;
     const speaking = me ? mic.speaking : levels.speaking(v.sid);
-    return `<div class="vc-user${speaking ? ' speaking' : ''}" data-speak="${me ? 'me' : v.sid}">
+    return `<div class="vc-user${speaking ? ' speaking' : ''}${me ? '' : ' clickable'}" data-speak="${me ? 'me' : v.sid}"${me ? '' : ` data-user="${v.uid}" data-pop`}>
       ${avatar(u, 'xs')}<span>${esc(u.display)}</span>
-      <span class="vc-icons">${v.sharing ? '<b class="live-tag">LIVE</b>' : ''}${!v.mic ? I.micOff : ''}${v.deaf ? I.headphonesOff : ''}</span>
+      <span class="vc-icons">${v.sharing ? '<b class="live-tag">LIVE</b>' : ''}${settings.userMute[v.uid] ? `<i class="local-mute" title="مكتوم عندك">${I.volumeOff}</i>` : ''}${!v.mic ? I.micOff : ''}${v.deaf ? I.headphonesOff : ''}</span>
     </div>`;
   }).join('')}</div>`;
 }
@@ -429,7 +431,7 @@ function renderMembers() {
   if (!s) { el.innerHTML = ''; return; }
   const all = [...s.members.values()];
   const on = all.filter((u) => S.online.has(u.id)), off = all.filter((u) => !S.online.has(u.id));
-  const row = (u) => `<div class="member${S.online.has(u.id) ? '' : ' off'}">
+  const row = (u) => `<div class="member${S.online.has(u.id) ? '' : ' off'}${u.id === S.me.id ? '' : ' clickable'}"${u.id === S.me.id ? '' : ` data-user="${u.id}" data-pop`}>
     <div class="avatar-wrap">${avatar(u, 'sm')}<i class="status${S.online.has(u.id) ? ' on' : ''}"></i></div>
     <div class="m-names"><b>${esc(u.display)}${u.id === s.owner ? `<span class="crown" title="صاحب القروب">${I.crown}</span>` : ''}</b><small dir="ltr">@${esc(u.username)}</small></div>
   </div>`;
@@ -623,10 +625,12 @@ async function joinVoice(channelId) {
     await mic.ensureContext();
     toast(e.name === 'NotAllowedError' ? 'المتصفح منع المايك — اسمح له من أيقونة القفل جنب الرابط' : 'ما قدرنا نشغل المايك — تقدر تسمع بس', 'err');
   }
+  const iceServers = await getIceServers();
   if (S.myVoice !== channelId) return; // طلع قبل ما يخلص
   mic.setMuted(!S.micOn || !S.hasMic || S.deaf);
   S.vs = new VoiceSession({
     mySid: S.sid,
+    iceServers,
     micTrack: mic.track,
     send: (to, d) => send({ t: 'rtc', to, d }),
     onAudio: attachAudio,
@@ -638,11 +642,25 @@ async function joinVoice(channelId) {
   renderAll();
 }
 
+// سيرفرات الاتصال (فيها TURN لو مفعّل). نحفظها ساعة عشان ما نطلبها كل مرة
+let iceCache = null;
+async function getIceServers() {
+  if (iceCache && Date.now() - iceCache.t < 3600000) return iceCache.servers;
+  try {
+    const r = await fetch('/api/ice', { credentials: 'same-origin' });
+    if (!r.ok) throw new Error(r.status);
+    iceCache = { servers: (await r.json()).iceServers, t: Date.now() };
+    return iceCache.servers;
+  } catch {
+    return null;
+  }
+}
+
 function teardownVoice() {
   if (S.screen) stopShare(true);
   S.vs?.close();
   S.vs = null;
-  for (const [sid, a] of S.audios) { a.srcObject = null; a.remove(); levels.unwatch(sid); }
+  for (const [sid, a] of S.audios) { a.srcObject = null; a.remove(); levels.unwatch(sid); dropBoost(sid); }
   S.audios.clear();
   for (const sid of [...S.tiles.keys()]) removeTile(sid);
   mic.stop();
@@ -667,6 +685,7 @@ function onVoiceState(v) {
       S.vs?.removePeer(v.sid);
       const a = S.audios.get(v.sid);
       if (a) { a.srcObject = null; a.remove(); S.audios.delete(v.sid); }
+      dropBoost(v.sid);
       levels.unwatch(v.sid);
       removeTile(v.sid);
       beep('leave', settings.sounds);
@@ -692,11 +711,37 @@ function attachAudio(sid, stream) {
   levels.watch(sid, stream);
 }
 
+const userGain = (uid) => (settings.userMute[uid] ? 0 : (settings.userVol[uid] ?? 100) / 100);
+const boosts = new Map(); // sid -> تكبير الصوت فوق 100%
+function dropBoost(sid) {
+  const b = boosts.get(sid);
+  if (!b) return;
+  try { b.src.disconnect(); b.gain.disconnect(); } catch { /* تجاهل */ }
+  boosts.delete(sid);
+}
 function applyVolumes() {
   for (const [sid, a] of S.audios) {
-    const uid = S.voice.get(sid)?.uid;
-    a.volume = Math.min(1, (settings.outVol / 100) * ((settings.userVol[uid] ?? 100) / 100));
-    a.muted = S.deaf;
+    const v = (settings.outVol / 100) * userGain(S.voice.get(sid)?.uid);
+    if (v > 1 && a.srcObject) {
+      // عنصر الصوت ما يقبل فوق 100%، فنمرره على مكبّر
+      let b = boosts.get(sid);
+      if (!b || b.stream !== a.srcObject) {
+        dropBoost(sid);
+        const ctx = levels.ctx();
+        if (settings.outDevice) ctx.setSinkId?.(settings.outDevice).catch(() => {});
+        const src = ctx.createMediaStreamSource(a.srcObject);
+        const gain = ctx.createGain();
+        src.connect(gain).connect(ctx.destination);
+        b = { src, gain, stream: a.srcObject };
+        boosts.set(sid, b);
+      }
+      b.gain.gain.value = S.deaf ? 0 : v;
+      a.muted = true;
+    } else {
+      dropBoost(sid);
+      a.volume = Math.min(1, v);
+      a.muted = S.deaf || v === 0;
+    }
   }
   for (const [sid, t] of S.tiles) {
     if (sid === S.sid) continue;
@@ -790,10 +835,12 @@ function renderVoiceView(c) {
     const u = userOf(v.uid);
     const me = v.sid === S.sid;
     const speaking = me ? mic.speaking : levels.speaking(v.sid);
-    return `<div class="tile${speaking ? ' speaking' : ''}" data-speak="${me ? 'me' : v.sid}" style="--h:${u.hue}">
+    const vol = settings.userVol[v.uid] ?? 100;
+    return `<div class="tile${speaking ? ' speaking' : ''}${me ? '' : ' clickable'}" data-speak="${me ? 'me' : v.sid}" style="--h:${u.hue}"${me ? '' : ` data-user="${v.uid}" data-pop role="button" tabindex="0" title="مستوى صوته عندك"`}>
       ${avatar(u, 'xl')}
       <div class="tile-name">${esc(u.display)}${me ? ' <small>(أنت)</small>' : ''}</div>
-      <div class="tile-icons">${!v.mic ? I.micOff : ''}${v.deaf ? I.headphonesOff : ''}${v.sharing ? '<b class="live-tag">LIVE</b>' : ''}</div>
+      ${!me && vol !== 100 && !settings.userMute[v.uid] ? `<div class="tile-vol-tag" dir="ltr">${vol}%</div>` : ''}
+      <div class="tile-icons">${settings.userMute[v.uid] ? `<i class="local-mute" title="مكتوم عندك">${I.volumeOff}</i>` : ''}${!v.mic ? I.micOff : ''}${v.deaf ? I.headphonesOff : ''}${v.sharing ? '<b class="live-tag">LIVE</b>' : ''}</div>
     </div>`;
   }).join('');
 }
@@ -812,7 +859,9 @@ function ensureTile(sid, stream, mine) {
           ? `<button class="tile-btn" data-act="cfg" title="جودة البث">${I.sliders}</button>
              <button class="tile-btn danger" data-act="stop" title="وقف البث">${I.monitorOff}</button>`
           : `<button class="tile-btn" data-act="mute" title="صوت البث">${I.volume}</button>
-             <input class="tile-vol" type="range" min="0" max="1" step="0.05" value="1" aria-label="مستوى صوت البث">`}
+             <input class="tile-vol" type="range" min="0" max="1" step="0.05" value="1" aria-label="مستوى صوت البث">
+             <button class="tile-btn q-btn" data-act="quality" data-pop title="جودة البث عندك">${QUALITY_LABEL[S.viewPref.get(sid) ?? 'auto']}</button>
+             ${pipSupported() ? `<button class="tile-btn" data-act="pip" title="صورة داخل صورة">${I.pip}</button>` : ''}`}
         <button class="tile-btn" data-act="stats" title="الإحصائيات">${I.activity}</button>
         <button class="tile-btn" data-act="focus" title="تكبير">${I.focus}</button>
         <button class="tile-btn" data-act="full" title="ملء الشاشة">${I.maximize}</button>
@@ -823,6 +872,9 @@ function ensureTile(sid, stream, mine) {
     t = { el, video, stats: $('.screen-stats', el), muted: false, vol: 1, prev: null, mine };
     setupZoom(t);
     S.tiles.set(sid, t);
+    // لو كان مختار جودة معينة لهذا الشخص من قبل، نطلبها من جديد
+    const pref = S.viewPref.get(sid);
+    if (!mine && pref !== undefined && pref !== 'auto') { S.vs?.requestQuality(sid, Number(pref)); el.classList.toggle('video-off', pref === '0'); }
     $('#screens').append(el);
     if (settings.outDevice && video.setSinkId && !mine) video.setSinkId(settings.outDevice).catch(() => {});
   }
@@ -837,6 +889,8 @@ function removeTile(sid) {
   const t = S.tiles.get(sid);
   if (!t) return;
   if (t.el.classList.contains('pseudo-full') || fullscreenEl() === t.el) exitFullscreen();
+  if (document.pictureInPictureElement === t.video) document.exitPictureInPicture().catch(() => {});
+  if ($('#pop').contains(document.activeElement) || S.popAnchor && t.el.contains(S.popAnchor)) closePop();
   t.video.srcObject = null;
   t.el.remove();
   S.tiles.delete(sid);
@@ -855,6 +909,8 @@ $('#screens').addEventListener('click', (e) => {
     case 'focus': S.focus = S.focus === sid ? null : sid; renderVoiceViewIfOpen(); break;
     case 'full': fullscreen(el); break;
     case 'unzoom': setZoom(t, 1, 0, 0); break;
+    case 'pip': togglePip(t.video); break;
+    case 'quality': openQualityPop(btn, sid); break;
     case 'mute':
       t.muted = !t.muted;
       applyVolumes();
@@ -872,6 +928,108 @@ $('#screens').addEventListener('dblclick', (e) => {
   const el = e.target.closest('.screen-tile');
   if (el && e.target.tagName === 'VIDEO') fullscreen(el);
 });
+
+/* ---- قائمة منبثقة (مستوى صوت شخص، جودة البث) ---- */
+function openPop(anchor, html, bind) {
+  const pop = $('#pop');
+  if (!pop.classList.contains('hidden') && S.popAnchor === anchor) { closePop(); return; }
+  // وقت ملء الشاشة ما يبان إلا اللي داخل العنصر، فنحط القائمة داخله
+  const host = fullscreenEl()?.contains(anchor) ? fullscreenEl() : document.body;
+  if (pop.parentElement !== host) host.append(pop);
+  pop.innerHTML = html;
+  pop.onclick = null;
+  pop.classList.remove('hidden');
+  const r = anchor.getBoundingClientRect();
+  const pw = pop.offsetWidth, ph = pop.offsetHeight;
+  let top = r.bottom + 8;
+  if (top + ph > innerHeight - 8) top = Math.max(8, r.top - ph - 8);
+  const left = Math.max(8, Math.min(innerWidth - pw - 8, r.left + r.width / 2 - pw / 2));
+  pop.style.top = `${top}px`;
+  pop.style.left = `${left}px`;
+  S.popAnchor = anchor;
+  bind(pop);
+  pop.querySelector('input, button')?.focus({ preventScroll: true });
+}
+function closePop() {
+  $('#pop').classList.add('hidden');
+  S.popAnchor = null;
+}
+document.addEventListener('pointerdown', (e) => {
+  if (!e.target.closest('#pop, [data-pop]')) closePop();
+}, true);
+
+// مستوى صوت شخص معين عندك (ما أحد يدري غيرك)
+function openUserPop(anchor, uid) {
+  const u = userOf(uid);
+  const vol = settings.userVol[uid] ?? 100;
+  openPop(anchor, `
+    <div class="pop-user">${avatar(u, 'sm')}<div><b>${esc(u.display)}</b><small dir="ltr">@${esc(u.username)}</small></div></div>
+    <label class="field"><span class="label">مستوى صوته عندك <b id="puVal" dir="ltr">${vol}%</b></span>
+      <input id="puVol" type="range" min="0" max="200" step="5" value="${vol}"></label>
+    <label class="switch"><input type="checkbox" id="puMute"${settings.userMute[uid] ? ' checked' : ''}><i></i><span>اكتمه عندي</span></label>
+    <p class="hint">التغيير عندك بس. فوق 100% يفضّل تستخدم سماعة.</p>
+    <button id="puReset" class="btn btn-soft btn-sm" type="button">رجّع الافتراضي</button>`, (pop) => {
+    const save = () => { saveSettings(); applyVolumes(); renderSidebar(); renderVoiceViewIfOpen(); };
+    $('#puVol', pop).addEventListener('input', (e) => {
+      settings.userVol[uid] = Number(e.target.value);
+      $('#puVal', pop).textContent = `${e.target.value}%`;
+      saveSettings(); applyVolumes();
+    });
+    $('#puVol', pop).addEventListener('change', save);
+    $('#puMute', pop).addEventListener('change', (e) => {
+      if (e.target.checked) settings.userMute[uid] = true; else delete settings.userMute[uid];
+      save();
+    });
+    $('#puReset', pop).addEventListener('click', () => {
+      delete settings.userVol[uid]; delete settings.userMute[uid];
+      $('#puVol', pop).value = 100; $('#puVal', pop).textContent = '100%'; $('#puMute', pop).checked = false;
+      save();
+    });
+  });
+}
+
+// جودة بث شخص معين عندك: كل مشاهد له اتصال لحاله، فاللي يبث يرسل لك الجودة اللي اخترتها
+const QUALITY_LABEL = { auto: 'تلقائي', 1080: '1080p', 720: '720p', 480: '480p', 0: 'بدون صورة' };
+function openQualityPop(anchor, sid) {
+  const cur = S.viewPref.get(sid) ?? 'auto';
+  const opts = [
+    ['auto', 'تلقائي', 'المتصفح يضبطها حسب نتك'],
+    ['1080', '1080p', ''],
+    ['720', '720p', 'أخف على النت'],
+    ['480', '480p', 'لبيانات الجوال'],
+    ['0', 'بدون صورة', 'تسمع صوت البث بس'],
+  ];
+  openPop(anchor, `<div class="pop-title">جودة البث عندك</div>
+    ${opts.map(([v, l, d]) => `<button type="button" class="pop-opt${String(cur) === v ? ' active' : ''}" data-q="${v}"><b>${l}</b>${d ? `<small>${d}</small>` : ''}</button>`).join('')}`, (pop) => {
+    pop.onclick = (e) => {
+      const b = e.target.closest('[data-q]');
+      if (!b) return;
+      const v = b.dataset.q;
+      S.viewPref.set(sid, v);
+      S.vs?.requestQuality(sid, v === 'auto' ? null : Number(v));
+      const t = S.tiles.get(sid);
+      if (t) {
+        $('[data-act="quality"]', t.el).textContent = QUALITY_LABEL[v];
+        t.el.classList.toggle('video-off', v === '0');
+      }
+      closePop();
+    };
+  });
+}
+
+/* ---- صورة داخل صورة: تتفرج على البث وانت في تطبيق أو تاب ثاني ---- */
+const pipSupported = () => document.pictureInPictureEnabled || !!HTMLVideoElement.prototype.webkitSetPresentationMode;
+async function togglePip(video) {
+  try {
+    if (document.pictureInPictureElement) { await document.exitPictureInPicture(); return; }
+    if (video.requestPictureInPicture && document.pictureInPictureEnabled) await video.requestPictureInPicture();
+    else if (video.webkitSetPresentationMode) {
+      video.webkitSetPresentationMode(video.webkitPresentationMode === 'picture-in-picture' ? 'inline' : 'picture-in-picture');
+    }
+  } catch {
+    toast('ما قدرنا نفتح صورة داخل صورة — جرّب كروم أو إيدج أو سفاري', 'err');
+  }
+}
 
 /* ---- ملء الشاشة ----
    الكمبيوتر والأندرويد: ملء شاشة عادي للبث مع أزراره.
@@ -1368,6 +1526,7 @@ $('#settingsModal').addEventListener('change', async (e) => {
   else if (t.id === 'outDevice') {
     settings.outDevice = t.value; saveSettings();
     for (const el of [...S.audios.values(), ...[...S.tiles.values()].map((x) => x.video)]) el.setSinkId?.(t.value).catch(() => {});
+    levels.ac?.setSinkId?.(t.value).catch(() => {});
   } else if (t.id === 'optEc') { settings.ec = t.checked; await applyMicSettings(); }
   else if (t.id === 'optAgc') { settings.agc = t.checked; await applyMicSettings(); }
   else if (t.id === 'optSounds') { settings.sounds = t.checked; saveSettings(); }
@@ -1430,6 +1589,8 @@ $('#emptyJoin').addEventListener('click', () => openServerModal('join'));
 $('#channelList').addEventListener('click', async (e) => {
   const nw = e.target.closest('[data-new]');
   if (nw) { openChannelModal(nw.dataset.new); return; }
+  const usr = e.target.closest('[data-user]');
+  if (usr) { openUserPop(usr, usr.dataset.user); return; }
   const del = e.target.closest('[data-del]');
   if (del) {
     e.stopPropagation();
@@ -1470,6 +1631,7 @@ function closeNav() { $('#app').classList.remove('nav-open', 'members-open'); }
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
+    if (!$('#pop').classList.contains('hidden')) { closePop(); return; }
     if ($('.screen-tile.pseudo-full')) exitFullscreen();
     closeModals(); $('#serverMenu').classList.add('hidden'); closeNav();
     return;
@@ -1484,3 +1646,15 @@ document.addEventListener('visibilitychange', () => {
 });
 navigator.mediaDevices?.addEventListener?.('devicechange', () => { if (!$('#settingsModal').classList.contains('hidden')) fillDevices(); });
 addEventListener('beforeunload', () => { if (S.myVoice) send({ t: 'voice.leave' }); });
+
+// الضغط على شخص في الروم الصوتي أو قائمة الأعضاء يفتح مستوى صوته
+for (const id of ['#tiles', '#membersList']) {
+  $(id).addEventListener('click', (e) => {
+    const el = e.target.closest('[data-user]');
+    if (el) openUserPop(el, el.dataset.user);
+  });
+  $(id).addEventListener('keydown', (e) => {
+    const el = e.target.closest('[data-user]');
+    if (el && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openUserPop(el, el.dataset.user); }
+  });
+}

@@ -8,15 +8,15 @@
 export const ICE_SERVERS = [
   { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
   { urls: 'stun:stun.cloudflare.com:3478' },
-  // لو بعض الشبكات ما اتصلت ببعض، أضف سيرفر TURN هنا:
-  // { urls: 'turn:YOUR_TURN_SERVER:3478', username: 'user', credential: 'pass' },
+  // سيرفر TURN يجي من السيرفر (/api/ice) إذا كان مفعّل
 ];
 
 const DEGRADATION = { detail: 'maintain-resolution', motion: 'maintain-framerate', balanced: 'balanced' };
 
 export class VoiceSession {
-  constructor({ mySid, micTrack, send, onAudio, onScreen, onPeerState }) {
+  constructor({ mySid, micTrack, send, onAudio, onScreen, onPeerState, iceServers }) {
     this.mySid = mySid;
+    this.iceServers = iceServers?.length ? iceServers : ICE_SERVERS;
     this.micTrack = micTrack;
     this.micStream = new MediaStream(micTrack ? [micTrack] : []);
     this.screenCarrier = new MediaStream(); // هوية ثابتة لمسارات البث
@@ -38,7 +38,7 @@ export class VoiceSession {
   addPeer(sid) {
     let p = this.peers.get(sid);
     if (p || sid === this.mySid) return p;
-    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS, bundlePolicy: 'max-bundle' });
+    const pc = new RTCPeerConnection({ iceServers: this.iceServers, bundlePolicy: 'max-bundle' });
     p = { sid, pc, polite: this.mySid > sid, makingOffer: false, ignoreOffer: false, remoteScreenId: null, sv: null, sa: null, mic: null, queue: Promise.resolve(),
       // الطرف اللي يستقبل الاتصال ما يرسل عروض لين يرد على أول عرض يجيه
       ready: this.mySid < sid };
@@ -114,6 +114,8 @@ export class VoiceSession {
   async handleSignal(p, d) {
     const from = p.sid;
     if (d.meta) { p.remoteScreenId = d.meta.screen || null; return; }
+    // المشاهد طلب جودة معينة لبثي (أو وقف الصورة)
+    if (d.pref !== undefined) { p.pref = d.pref; this.tunePeer(p); return; }
     const pc = p.pc;
     if (pc.signalingState === 'closed') return;
     try {
@@ -133,6 +135,11 @@ export class VoiceSession {
     } catch (e) {
       console.warn('signal failed', e);
     }
+  }
+
+  // نطلب من اللي يبث جودة معينة لنا: 1080 / 720 / 480، أو 0 = بدون صورة، أو null = تلقائي
+  requestQuality(sid, height) {
+    if (this.peers.has(sid)) this.send(sid, { pref: height });
   }
 
   // لو تغير مسار المايك (نادر) نبدله بدون ما نقطع الاتصال
@@ -177,10 +184,17 @@ export class VoiceSession {
     if (p.sa && this.screenTracks.audio) await this.setParams(p.sa, (e) => { e.maxBitrate = 192000; });
     if (p.sv && this.screenTracks.video && this.cfg) {
       const cfg = this.cfg;
+      // كل مشاهد له اتصال لحاله، فنقدر نعطي كل واحد الجودة اللي طلبها
+      const srcH = this.screenTracks.video.getSettings().height || 1080;
+      const want = p.pref;
+      const scale = want > 0 && want < srcH ? srcH / want : 1;
+      const bitrate = Math.max(0.6, cfg.bitrate / (scale * scale));
+      const fps = want > 0 && want <= 480 ? Math.min(cfg.fps, 30) : cfg.fps;
       await this.setParams(p.sv, (e) => {
-        e.maxBitrate = Math.round(cfg.bitrate * 1e6);
-        e.maxFramerate = cfg.fps;
-        e.scaleResolutionDownBy = 1;
+        e.active = want !== 0;
+        e.maxBitrate = Math.round(bitrate * 1e6);
+        e.maxFramerate = fps;
+        e.scaleResolutionDownBy = scale;
         e.priority = 'high';
         e.networkPriority = 'high';
       }, DEGRADATION[cfg.mode]);

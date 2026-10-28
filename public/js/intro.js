@@ -85,7 +85,7 @@ export function startIntro({ onGo }) {
       for (let j = i + 1; j < pts.length; j++) {
         const b = pts[j], d = Math.hypot(a.x - b.x, a.y - b.y);
         if (d < link) {
-          g.strokeStyle = `rgba(140, 132, 255, ${(1 - d / link) * 0.22})`;
+          g.strokeStyle = `rgba(170, 150, 255, ${(1 - d / link) * 0.2})`;
           g.lineWidth = 1;
           g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke();
         }
@@ -93,11 +93,11 @@ export function startIntro({ onGo }) {
       if (mouse.active) {
         const d = Math.hypot(a.x - mouse.x, a.y - mouse.y);
         if (d < 180) {
-          g.strokeStyle = `rgba(45, 212, 191, ${(1 - d / 180) * 0.35})`;
+          g.strokeStyle = `rgba(255, 181, 71, ${(1 - d / 180) * 0.4})`;
           g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(mouse.x, mouse.y); g.stroke();
         }
       }
-      g.fillStyle = 'rgba(220, 222, 255, .75)';
+      g.fillStyle = 'rgba(240, 232, 255, .8)';
       g.beginPath(); g.arc(a.x, a.y, a.r, 0, Math.PI * 2); g.fill();
     }
     raf = requestAnimationFrame(frame);

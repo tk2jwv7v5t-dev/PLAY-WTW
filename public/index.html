@@ -5,11 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>PLAY WTW — Play with me and talk with me</title>
   <meta name="description" content="قروبات ورومات صوت وشات وبث شاشة لين 4K مع أصحابك.">
-  <meta name="theme-color" content="#0a0b0f">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%236c63ff'/%3E%3Cpath d='M24 18l24 14-24 14z' fill='white'/%3E%3C/svg%3E">
+  <meta name="theme-color" content="#0b0918">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23ffb547'/%3E%3Cstop offset='.5' stop-color='%23ff5d8f'/%3E%3Cstop offset='1' stop-color='%238b6cff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='18' fill='url(%23g)'/%3E%3Cpath d='M24 18l24 14-24 14z' fill='white'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Readex+Pro:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -29,10 +29,9 @@
         <span class="w t"><span class="k">W</span><span class="x">ITH</span></span>
         <span class="w t z"><span class="x">ME</span></span>
       </h1>
-      <p class="intro-sub">قروبات · رومات صوت · شات · بث شاشة لين 4K</p>
+      <p class="intro-sub">سولف مع ربعك، العبوا سوا، وشارك شاشتك بجودة 4K</p>
       <button id="introGo" class="btn btn-primary btn-xl intro-go" type="button">
         <span id="introGoText">انتقل لتسجيل الدخول</span>
-        <span class="arrow" aria-hidden="true">←</span>
       </button>
     </div>
     <p class="intro-hint">حرّك الماوس · اضغط على الشعار يعيد الحركة</p>
@@ -40,8 +39,21 @@
 
   <!-- ================= تسجيل الدخول ================= -->
   <section id="auth" class="auth hidden">
-    <div class="auth-card surface">
+    <div class="auth-shell">
+    <aside class="auth-side" aria-hidden="true">
       <div class="auth-brand"><div class="brand-mark"></div><span>PLAY WTW</span></div>
+      <h2 class="side-title">سهرتك مع ربعك<br>تبدأ من هنا</h2>
+      <p class="side-text">قروب لكم، رومات للسوالف واللعب، وشاشة تشاركها بضغطة.</p>
+      <div class="room-preview">
+        <div class="rp-head"><span data-icon="volume"></span><b>الديوانية</b><span class="rp-count">4 داخل</span></div>
+        <div class="rp-user t1"><div class="avatar sm" style="--h:28">ف</div><span>فهد</span><b class="live-tag">LIVE</b></div>
+        <div class="rp-user t2"><div class="avatar sm" style="--h:320">ن</div><span>نورة</span></div>
+        <div class="rp-user t3"><div class="avatar sm" style="--h:200">س</div><span>سلطان</span></div>
+        <div class="rp-user"><div class="avatar sm" style="--h:260">ر</div><span>ريان</span><span class="rp-mute" data-icon="micOff"></span></div>
+      </div>
+    </aside>
+    <div class="auth-card surface">
+      <div class="auth-brand mobile-brand"><div class="brand-mark"></div><span>PLAY WTW</span></div>
       <div class="auth-tabs" role="tablist">
         <button class="auth-tab active" type="button" data-mode="login" role="tab">تسجيل الدخول</button>
         <button class="auth-tab" type="button" data-mode="register" role="tab">حساب جديد</button>
@@ -69,6 +81,7 @@
         <p id="authError" class="form-error" role="alert"></p>
         <button id="authSubmit" class="btn btn-primary btn-lg" type="submit">دخول</button>
       </form>
+    </div>
     </div>
   </section>
 
@@ -349,6 +362,7 @@
     </div>
   </div>
 
+  <div id="pop" class="pop hidden" role="dialog"></div>
   <div id="toasts" class="toasts" aria-live="polite"></div>
 
   <script type="module" src="/js/main.js"></script>

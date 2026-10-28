@@ -16,6 +16,10 @@ const MAX_OWNED_SERVERS = 20;
 const MAX_CHANNELS = 50;
 const MAX_MESSAGE = 2000;
 const HISTORY_PAGE = 50;
+const STUN_ONLY = [
+  { urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'] },
+];
+const TURN_TTL = 86400; // صلاحية بيانات TURN بالثواني
 
 export default {
   async fetch(req, env) {
@@ -106,6 +110,10 @@ export class Hub extends DurableObject {
     const route = `${req.method} ${url.pathname}`;
     try {
       if (route === 'GET /api/ws') return this.openSocket(req, url);
+      if (route === 'GET /api/ice') {
+        if (!(await this.authed(req))) return fail('unauthorized', 401);
+        return json({ iceServers: await this.iceServers() });
+      }
       if (route === 'GET /api/me') {
         const user = await this.authed(req);
         return user ? json({ user: this.publicUser(user) }) : fail('unauthorized', 401);
@@ -196,6 +204,37 @@ export class Hub extends DurableObject {
     return this.sql.exec(
       'SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ? AND s.expires > ?',
       await sha256(token), Date.now()).toArray()[0] || null;
+  }
+
+  /* ---------- TURN ----------
+     بعض الشبكات (خصوصاً بيانات الجوال) ما تقدر تتصل ببعض مباشرة،
+     فنمرر الصوت والبث عن طريق سيرفر TURN حق Cloudflare.
+     يحتاج سرّين في إعدادات الـ Worker: TURN_KEY_ID و TURN_KEY_API_TOKEN.
+     نطلب بيانات دخول مؤقتة ونعيد استخدامها لين يقرب ينتهي وقتها. */
+  async iceServers() {
+    const { TURN_KEY_ID: id, TURN_KEY_API_TOKEN: token } = this.env;
+    if (!id || !token) return STUN_ONLY;
+    if (this.turn && Date.now() < this.turn.until) return this.turn.servers;
+    try {
+      const r = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${id}/credentials/generate-ice-servers`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ ttl: TURN_TTL }),
+      });
+      if (!r.ok) throw new Error(`TURN ${r.status}`);
+      const d = await r.json();
+      const list = Array.isArray(d.iceServers) ? d.iceServers : [d.iceServers];
+      // المنفذ 53 تمنعه المتصفحات وياخذ وقت لين يفشل، فنشيله
+      const servers = list.map((s) => ({
+        ...s,
+        urls: [].concat(s.urls).filter((u) => !/:53(\?|$)/.test(u)),
+      })).filter((s) => s.urls.length);
+      this.turn = { servers, until: Date.now() + (TURN_TTL / 2) * 1000 };
+      return servers;
+    } catch (e) {
+      console.error('turn', e);
+      return STUN_ONLY;
+    }
   }
 
   publicUser(u) {
