@@ -806,7 +806,7 @@ function ensureTile(sid, stream, mine) {
     el.dataset.sid = sid;
     el.innerHTML = `
       <video autoplay playsinline></video>
-      <div class="screen-top"><span class="chip live">LIVE</span><span class="chip tile-who"></span><span class="chip screen-stats"></span></div>
+      <div class="screen-top"><span class="chip live">LIVE</span><span class="chip tile-who"></span><span class="chip screen-stats"></span><button class="chip zoom-chip" type="button" data-act="unzoom" title="رجّع الحجم"></button></div>
       <div class="screen-actions">
         ${mine
           ? `<button class="tile-btn" data-act="cfg" title="جودة البث">${I.sliders}</button>
@@ -821,6 +821,7 @@ function ensureTile(sid, stream, mine) {
     video.muted = mine;
     video.addEventListener('playing', () => el.classList.remove('loading'));
     t = { el, video, stats: $('.screen-stats', el), muted: false, vol: 1, prev: null, mine };
+    setupZoom(t);
     S.tiles.set(sid, t);
     $('#screens').append(el);
     if (settings.outDevice && video.setSinkId && !mine) video.setSinkId(settings.outDevice).catch(() => {});
@@ -835,6 +836,7 @@ function ensureTile(sid, stream, mine) {
 function removeTile(sid) {
   const t = S.tiles.get(sid);
   if (!t) return;
+  if (t.el.classList.contains('pseudo-full') || fullscreenEl() === t.el) exitFullscreen();
   t.video.srcObject = null;
   t.el.remove();
   S.tiles.delete(sid);
@@ -852,6 +854,7 @@ $('#screens').addEventListener('click', (e) => {
     case 'stats': el.classList.toggle('show-stats'); btn.classList.toggle('active'); break;
     case 'focus': S.focus = S.focus === sid ? null : sid; renderVoiceViewIfOpen(); break;
     case 'full': fullscreen(el); break;
+    case 'unzoom': setZoom(t, 1, 0, 0); break;
     case 'mute':
       t.muted = !t.muted;
       applyVolumes();
@@ -869,9 +872,133 @@ $('#screens').addEventListener('dblclick', (e) => {
   const el = e.target.closest('.screen-tile');
   if (el && e.target.tagName === 'VIDEO') fullscreen(el);
 });
-function fullscreen(el) {
-  if (document.fullscreenElement) document.exitFullscreen();
-  else (el.requestFullscreen || el.webkitRequestFullscreen)?.call(el);
+
+/* ---- ملء الشاشة ----
+   الكمبيوتر والأندرويد: ملء شاشة عادي للبث مع أزراره.
+   الآيفون: سفاري ما يسمح إلا للفيديو نفسه، فنفتحه بمشغل الآيفون.
+   ولو ما ضبط ولا واحد منهم: نكبّر البث على كامل الصفحة. */
+const fullscreenEl = () => document.fullscreenElement || document.webkitFullscreenElement || $('.screen-tile.pseudo-full');
+async function fullscreen(el) {
+  if (fullscreenEl()) { exitFullscreen(); return; }
+  const video = $('video', el);
+  const req = el.requestFullscreen || el.webkitRequestFullscreen;
+  if (req) {
+    try {
+      await req.call(el, { navigationUI: 'hide' });
+      lockLandscape(video);
+      return;
+    } catch { /* نجرب اللي بعده */ }
+  }
+  if (video.webkitEnterFullscreen && video.readyState >= 1) {
+    try {
+      video.webkitEnterFullscreen();
+      video.addEventListener('webkitendfullscreen', () => video.play().catch(() => {}), { once: true });
+      return;
+    } catch { /* نجرب اللي بعده */ }
+  }
+  el.classList.add('pseudo-full');
+  document.body.classList.add('has-pseudo-full');
+  lockLandscape(video);
+  updateFullIcons();
+}
+function exitFullscreen() {
+  const pseudo = $('.screen-tile.pseudo-full');
+  if (pseudo) {
+    pseudo.classList.remove('pseudo-full');
+    document.body.classList.remove('has-pseudo-full');
+    screen.orientation?.unlock?.();
+    updateFullIcons();
+    return;
+  }
+  (document.exitFullscreen || document.webkitExitFullscreen)?.call(document)?.catch?.(() => {});
+}
+// البث العريض يقلب الجوال بالعرض تلقائياً (إذا المتصفح يسمح)
+function lockLandscape(video) {
+  if (!matchMedia('(pointer: coarse)').matches) return;
+  if (video.videoWidth && video.videoWidth < video.videoHeight) return;
+  screen.orientation?.lock?.('landscape').catch(() => {});
+}
+function updateFullIcons() {
+  const full = fullscreenEl();
+  for (const t of S.tiles.values()) {
+    const b = $('[data-act="full"]', t.el);
+    const on = full === t.el;
+    b.innerHTML = on ? I.minimize : I.maximize;
+    b.title = on ? 'اطلع من ملء الشاشة' : 'ملء الشاشة';
+  }
+}
+for (const ev of ['fullscreenchange', 'webkitfullscreenchange']) {
+  document.addEventListener(ev, () => {
+    if (!document.fullscreenElement && !document.webkitFullscreenElement) screen.orientation?.unlock?.();
+    updateFullIcons();
+  });
+}
+
+/* ---- تكبير البث (قرصة بإصبعين في الجوال، أو عجلة الماوس) ----
+   مفيد لما تتفرج على بث 4K من الجوال وتبي تقرا خط صغير. */
+function setZoom(t, s, x, y) {
+  s = Math.min(6, Math.max(1, s));
+  const r = t.el.getBoundingClientRect();
+  const maxX = (r.width * (s - 1)) / 2, maxY = (r.height * (s - 1)) / 2;
+  t.zoom = { s, x: s === 1 ? 0 : Math.max(-maxX, Math.min(maxX, x)), y: s === 1 ? 0 : Math.max(-maxY, Math.min(maxY, y)) };
+  t.video.style.transform = s === 1 ? '' : `translate(${t.zoom.x}px, ${t.zoom.y}px) scale(${s})`;
+  t.el.classList.toggle('zoomed', s > 1);
+  $('.zoom-chip', t.el).textContent = `×${s.toFixed(1)} ✕`;
+}
+function setupZoom(t) {
+  const v = t.video;
+  const pts = new Map();
+  let base = null, moved = false, lastTap = 0;
+  t.zoom = { s: 1, x: 0, y: 0 };
+  // نقطة على الشاشة نسبة لمنتصف البث
+  const rel = (p) => { const r = t.el.getBoundingClientRect(); return { x: p.x - (r.left + r.width / 2), y: p.y - (r.top + r.height / 2) }; };
+  const snap = () => { base = { z: { ...t.zoom }, pts: [...pts.values()].map((p) => ({ ...p })) }; };
+  // نكبّر حول نقطة معينة بحيث تبقى تحت الإصبع/الماوس
+  const zoomAround = (from, s1, q) => setZoom(t, s1, q.x - (q.x - from.x) * (s1 / from.s), q.y - (q.y - from.y) * (s1 / from.s));
+
+  v.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    try { v.setPointerCapture(e.pointerId); } catch { /* تجاهل */ }
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    moved = false;
+    snap();
+  });
+  v.addEventListener('pointermove', (e) => {
+    if (!pts.has(e.pointerId)) return;
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const cur = [...pts.values()];
+    if (cur.length >= 2 && base.pts.length >= 2) {
+      const d0 = Math.hypot(base.pts[0].x - base.pts[1].x, base.pts[0].y - base.pts[1].y) || 1;
+      const d1 = Math.hypot(cur[0].x - cur[1].x, cur[0].y - cur[1].y);
+      const m0 = rel({ x: (base.pts[0].x + base.pts[1].x) / 2, y: (base.pts[0].y + base.pts[1].y) / 2 });
+      const m1 = rel({ x: (cur[0].x + cur[1].x) / 2, y: (cur[0].y + cur[1].y) / 2 });
+      const s1 = Math.min(6, Math.max(1, base.z.s * (d1 / d0)));
+      setZoom(t, s1, m1.x - (m0.x - base.z.x) * (s1 / base.z.s), m1.y - (m0.y - base.z.y) * (s1 / base.z.s));
+      moved = true;
+    } else if (cur.length === 1 && t.zoom.s > 1) {
+      const dx = cur[0].x - base.pts[0].x, dy = cur[0].y - base.pts[0].y;
+      if (Math.abs(dx) + Math.abs(dy) > 4) moved = true;
+      setZoom(t, t.zoom.s, base.z.x + dx, base.z.y + dy);
+    }
+  });
+  const up = (e) => {
+    if (!pts.delete(e.pointerId)) return;
+    snap();
+    // ضغطتين بالإصبع: تكبير/ملء شاشة (الماوس عنده dblclick)
+    if (e.pointerType !== 'mouse' && !moved && pts.size === 0) {
+      const now = Date.now();
+      if (now - lastTap < 320) {
+        lastTap = 0;
+        if (t.zoom.s > 1) setZoom(t, 1, 0, 0); else fullscreen(t.el);
+      } else lastTap = now;
+    }
+  };
+  v.addEventListener('pointerup', up);
+  v.addEventListener('pointercancel', up);
+  v.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    zoomAround(t.zoom, t.zoom.s * Math.exp(-e.deltaY * 0.0018), rel({ x: e.clientX, y: e.clientY }));
+  }, { passive: false });
 }
 
 /* ---- بث الشاشة ---- */
@@ -1342,7 +1469,11 @@ $('#scrim').addEventListener('click', () => $('#app').classList.remove('nav-open
 function closeNav() { $('#app').classList.remove('nav-open', 'members-open'); }
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { closeModals(); $('#serverMenu').classList.add('hidden'); closeNav(); return; }
+  if (e.key === 'Escape') {
+    if ($('.screen-tile.pseudo-full')) exitFullscreen();
+    closeModals(); $('#serverMenu').classList.add('hidden'); closeNav();
+    return;
+  }
   if ($('#app').classList.contains('hidden') || e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.target.closest('input, textarea, select') || !$$('.modal').every((m) => m.classList.contains('hidden'))) return;
   if (e.code === 'KeyM') toggleMic();
