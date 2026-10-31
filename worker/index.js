@@ -124,6 +124,8 @@ export class Hub extends DurableObject {
         if (route === 'POST /api/register') return this.register(req);
         if (route === 'POST /api/login') return this.login(req);
         if (route === 'POST /api/logout') return this.logout(req);
+        if (route === 'POST /api/password') return this.changePassword(req);
+        if (route === 'POST /api/account/delete') return this.deleteAccount(req);
       }
       return fail('not_found', 404);
     } catch (e) {
@@ -190,6 +192,63 @@ export class Hub extends DurableObject {
     this.sql.exec('INSERT INTO sessions (token, user_id, expires) VALUES (?, ?, ?)', await sha256(token), userId, Date.now() + maxAge * 1000);
     const user = this.sql.exec('SELECT * FROM users WHERE id = ?', userId).one();
     return json({ user: this.publicUser(user) }, 200, { 'set-cookie': sessionCookie(req, token, maxAge) });
+  }
+
+  // نتأكد من كلمة المرور الحالية قبل أي تغيير حساس
+  async checkPassword(req, user, password) {
+    if (this.limited(req)) return fail('too_many_attempts', 429);
+    const hash = await hashPassword(String(password || ''), unb64(user.salt));
+    if (!sameBytes(hash, unb64(user.hash))) {
+      this.noteFailure(req);
+      return fail('wrong_password', 403);
+    }
+    return null;
+  }
+
+  async changePassword(req) {
+    const user = await this.authed(req);
+    if (!user) return fail('unauthorized', 401);
+    const b = await this.body(req);
+    const bad = await this.checkPassword(req, user, b.current);
+    if (bad) return bad;
+    const next = String(b.next || '');
+    if (next.length < 8 || next.length > 128) return fail('bad_password');
+    const salt = randomBytes(16);
+    const hash = await hashPassword(next, salt);
+    this.sql.exec('UPDATE users SET hash = ?, salt = ? WHERE id = ?', b64(hash), b64(salt), user.id);
+    // نطلّع كل الأجهزة الثانية، ونخلي هذا الجهاز مسجّل
+    const keep = await sha256(cookie(req, 'sid'));
+    this.sql.exec('DELETE FROM sessions WHERE user_id = ? AND token != ?', user.id, keep);
+    return json({ ok: true });
+  }
+
+  async deleteAccount(req) {
+    const user = await this.authed(req);
+    if (!user) return fail('unauthorized', 401);
+    const b = await this.body(req);
+    const bad = await this.checkPassword(req, user, b.password);
+    if (bad) return bad;
+    // القروبات اللي يملكها تنحذف بالكامل، واللي هو عضو فيها يطلع منها
+    const owned = this.sql.exec('SELECT id FROM servers WHERE owner_id = ?', user.id).toArray().map((r) => r.id);
+    for (const sid of owned) {
+      this.kickFromVoice(sid, null);
+      this.toServer(sid, { t: 'server.remove', serverId: sid });
+      this.sql.exec('DELETE FROM messages WHERE channel_id IN (SELECT id FROM channels WHERE server_id = ?)', sid);
+      this.sql.exec('DELETE FROM channels WHERE server_id = ?', sid);
+      this.sql.exec('DELETE FROM members WHERE server_id = ?', sid);
+      this.sql.exec('DELETE FROM servers WHERE id = ?', sid);
+    }
+    const joined = this.sql.exec('SELECT server_id FROM members WHERE user_id = ?', user.id).toArray().map((r) => r.server_id);
+    for (const sid of joined) {
+      this.kickFromVoice(sid, user.id);
+      this.sql.exec('DELETE FROM members WHERE server_id = ? AND user_id = ?', sid, user.id);
+      this.toServer(sid, { t: 'member.remove', serverId: sid, uid: user.id });
+    }
+    this.sql.exec('DELETE FROM messages WHERE user_id = ?', user.id);
+    this.sql.exec('DELETE FROM sessions WHERE user_id = ?', user.id);
+    this.sql.exec('DELETE FROM users WHERE id = ?', user.id);
+    for (const s of this.sockets()) if (s.att.uid === user.id) { try { s.ws.close(4001, 'deleted'); } catch { /* تسكر */ } }
+    return json({ ok: true }, 200, { 'set-cookie': sessionCookie(req, '', 0) });
   }
 
   async logout(req) {

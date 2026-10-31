@@ -5,6 +5,7 @@ import { I, $, $$, esc, clean, fillIcons, avatar, linkify, timeLabel, store, toa
 import { startIntro } from './intro.js';
 import { MicPipeline, LevelWatcher } from './audio.js';
 import { VoiceSession } from './voice.js';
+import { SUPPORT } from './config.js';
 
 const RES = { 720: [1280, 720], 1080: [1920, 1080], 1440: [2560, 1440], 2160: [3840, 2160] };
 const PRESETS = [
@@ -21,6 +22,7 @@ const NS_LABEL = { gtcrn: 'ذكاء اصطناعي قوي', rnnoise: 'ذكاء �
 const settings = Object.assign({
   inDevice: '', outDevice: '', ns: 'rnnoise', gateAuto: true, gateDb: -50,
   inVol: 100, outVol: 100, ec: true, agc: true, sounds: true, userVol: {}, userMute: {},
+  notify: false, notifyAll: false, fontScale: 'md', reduceMotion: false, ptt: false, pttKey: 'KeyV',
 }, store.get('settings', {}));
 const shareCfg = Object.assign({ res: '1080', fps: 60, mode: 'balanced', brAuto: true, br: 12, audio: true }, store.get('share', {}));
 const saveSettings = () => store.set('settings', settings);
@@ -517,6 +519,7 @@ function onMessage(msg, nonce) {
     renderMessages(false);
     if (atBottom || mine) box.scrollTop = box.scrollHeight;
   }
+  if (!mine) notifyMessage(msg);
   if (!mine && !visible) {
     S.unread.add(msg.channel);
     renderRail(); renderSidebar();
@@ -627,7 +630,7 @@ async function joinVoice(channelId) {
   }
   const iceServers = await getIceServers();
   if (S.myVoice !== channelId) return; // طلع قبل ما يخلص
-  mic.setMuted(!S.micOn || !S.hasMic || S.deaf);
+  mic.setMuted(!micLive());
   S.vs = new VoiceSession({
     mySid: S.sid,
     iceServers,
@@ -777,7 +780,7 @@ async function toggleMic() {
     S.micOn = !S.micOn;
   }
   store.set('micOn', S.micOn);
-  mic.setMuted(!S.micOn || !S.hasMic || S.deaf);
+  mic.setMuted(!micLive());
   beep(S.micOn ? 'on' : 'off', settings.sounds);
   syncVoiceState();
   renderUserPanel(); renderSidebar(); renderVoiceViewIfOpen();
@@ -785,7 +788,7 @@ async function toggleMic() {
 
 function setDeaf(v) {
   S.deaf = v;
-  mic.setMuted(!S.micOn || !S.hasMic || S.deaf);
+  mic.setMuted(!micLive());
   applyVolumes();
   beep(v ? 'off' : 'on', settings.sounds);
   syncVoiceState();
@@ -1296,13 +1299,21 @@ for (const tabs of $$('.seg-tabs')) {
   });
 }
 
-function confirmBox(title, text, okText = 'تأكيد') {
+// لو askPassword: يطلب كلمة المرور ويرجّعها بدل true
+function confirmBox(title, text, okText = 'تأكيد', askPassword = false) {
   return new Promise((resolve) => {
     $('#confirmTitle').textContent = title;
     $('#confirmText').textContent = text;
     $('#confirmOk').textContent = okText;
+    const input = $('#confirmInput');
+    input.value = '';
+    input.classList.toggle('hidden', !askPassword);
     openModal('#confirmModal');
-    const ok = () => { cleanup(); closeModals(); resolve(true); };
+    if (askPassword) setTimeout(() => input.focus(), 40);
+    const ok = () => {
+      if (askPassword && !input.value) { input.focus(); return; }
+      cleanup(); closeModals(); resolve(askPassword ? input.value : true);
+    };
     const obs = new MutationObserver(() => { if ($('#confirmModal').classList.contains('hidden')) { cleanup(); resolve(false); } });
     const cleanup = () => { $('#confirmOk').removeEventListener('click', ok); obs.disconnect(); };
     $('#confirmOk').addEventListener('click', ok);
@@ -1476,6 +1487,17 @@ async function openSettings() {
   $('#optEc').checked = settings.ec;
   $('#optAgc').checked = settings.agc;
   $('#optSounds').checked = settings.sounds;
+  $('#optNotify').checked = settings.notify && 'Notification' in window && Notification.permission === 'granted';
+  $('#optNotifyAll').checked = settings.notifyAll;
+  $('#optNotifyAll').disabled = !$('#optNotify').checked;
+  $('#optNotify').disabled = !('Notification' in window);
+  if (!('Notification' in window)) $('#notifyHint').textContent = 'متصفحك ما يدعم الإشعارات. في الآيفون: أضف الموقع للشاشة الرئيسية أول.';
+  $$('#settingsModal input[name=fontScale]').forEach((r) => { r.checked = r.value === settings.fontScale; });
+  $('#optReduceMotion').checked = settings.reduceMotion;
+  $('#optPtt').checked = settings.ptt;
+  $('#pttKeyBtn').textContent = keyLabel(settings.pttKey);
+  $('#passwordForm').reset();
+  $('#passwordError').textContent = '';
   updateVolLabels();
   $('#profileDisplay').value = S.me.display;
   $('#profileHue').value = S.me.hue;
@@ -1530,6 +1552,26 @@ $('#settingsModal').addEventListener('change', async (e) => {
   } else if (t.id === 'optEc') { settings.ec = t.checked; await applyMicSettings(); }
   else if (t.id === 'optAgc') { settings.agc = t.checked; await applyMicSettings(); }
   else if (t.id === 'optSounds') { settings.sounds = t.checked; saveSettings(); }
+  else if (t.id === 'optNotify') {
+    if (t.checked && Notification.permission !== 'granted') {
+      const p = await Notification.requestPermission().catch(() => 'denied');
+      if (p !== 'granted') {
+        t.checked = false;
+        $('#notifyHint').textContent = 'المتصفح منع الإشعارات. اسمح لها من أيقونة القفل جنب رابط الموقع.';
+      }
+    }
+    settings.notify = t.checked;
+    $('#optNotifyAll').disabled = !t.checked;
+    saveSettings();
+  } else if (t.id === 'optNotifyAll') { settings.notifyAll = t.checked; saveSettings(); }
+  else if (t.name === 'fontScale') { settings.fontScale = t.value; saveSettings(); applyLook(); }
+  else if (t.id === 'optReduceMotion') { settings.reduceMotion = t.checked; saveSettings(); applyLook(); }
+  else if (t.id === 'optPtt') {
+    settings.ptt = t.checked; saveSettings();
+    S.pttHeld = false;
+    mic.setMuted(!micLive());
+    if (t.checked) toast(`المايك يفتح بس وانت ضاغط ${keyLabel(settings.pttKey)}`);
+  }
   else if (t.id === 'gateAuto') { settings.gateAuto = t.checked; $('#gateRange').disabled = t.checked; saveSettings(); mic.update(settings); }
 });
 $('#settingsModal').addEventListener('input', (e) => {
@@ -1565,6 +1607,59 @@ $('#profileForm').addEventListener('submit', (e) => {
   send({ t: 'profile.update', display: $('#profileDisplay').value, hue: Number($('#profileHue').value) });
   toast('انحفظ ✅', 'ok');
 });
+// نختار زر "اضغط عشان تتكلم"
+$('#pttKeyBtn').addEventListener('click', () => {
+  const btn = $('#pttKeyBtn');
+  S.capturingKey = true;
+  btn.textContent = 'اضغط الزر…';
+  btn.classList.add('active');
+  const onKey = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.key !== 'Escape' && !['Enter', 'Tab'].includes(e.code)) { settings.pttKey = e.code; saveSettings(); }
+    btn.textContent = keyLabel(settings.pttKey);
+    btn.classList.remove('active');
+    S.capturingKey = false;
+    removeEventListener('keydown', onKey, true);
+  };
+  addEventListener('keydown', onKey, true);
+});
+
+async function postJSON(url, body) {
+  const r = await fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || 'server_error');
+  return d;
+}
+
+$('#passwordForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target, err = $('#passwordError');
+  if (f.next.value.length < 8) { err.textContent = ERRORS.bad_password; return; }
+  err.textContent = '';
+  try {
+    await postJSON('/api/password', { current: f.current.value, next: f.next.value });
+    f.reset();
+    toast('تغيّرت كلمة المرور ✅', 'ok');
+  } catch (ex) { err.textContent = ERRORS[ex.message] || ERRORS.network; }
+});
+
+$('#deleteAccountBtn').addEventListener('click', async () => {
+  const password = await confirmBox('تحذف حسابك؟',
+    'بينحذف حسابك ورسايلك والقروبات اللي سويتها، وتطلع من باقي القروبات. ما تقدر ترجعه. اكتب كلمة المرور للتأكيد.',
+    'احذف حسابي نهائياً', true);
+  if (!password) return;
+  try {
+    await postJSON('/api/account/delete', { password });
+    S.loggingOut = true;
+    leaveVoice(true);
+    S.ws?.close();
+    location.replace('/');
+  } catch (ex) {
+    toast(ERRORS[ex.message] || ERRORS.network, 'err');
+  }
+});
+
 $('#logoutBtn').addEventListener('click', async () => {
   S.loggingOut = true;
   leaveVoice(true);
@@ -1638,9 +1733,66 @@ document.addEventListener('keydown', (e) => {
   }
   if ($('#app').classList.contains('hidden') || e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.target.closest('input, textarea, select') || !$$('.modal').every((m) => m.classList.contains('hidden'))) return;
+  if (settings.ptt && e.code === settings.pttKey) return;
   if (e.code === 'KeyM') toggleMic();
   if (e.code === 'KeyD') setDeaf(!S.deaf);
 });
+
+/* ---- اضغط عشان تتكلم ---- */
+function micLive() {
+  return S.micOn && S.hasMic && !S.deaf && (!settings.ptt || S.pttHeld);
+}
+function setPtt(held) {
+  if (S.pttHeld === held) return;
+  S.pttHeld = held;
+  mic.setMuted(!micLive());
+  $('#app').classList.toggle('ptt-on', held);
+}
+document.addEventListener('keydown', (e) => {
+  if (!settings.ptt || e.code !== settings.pttKey || e.repeat || S.capturingKey) return;
+  if (e.target.closest('input, textarea, select')) return;
+  e.preventDefault();
+  setPtt(true);
+});
+document.addEventListener('keyup', (e) => { if (e.code === settings.pttKey) setPtt(false); });
+addEventListener('blur', () => setPtt(false));
+const keyLabel = (code) => code.replace(/^Key/, '').replace(/^Digit/, '').replace(/^Numpad/, 'Num ') || code;
+
+/* ---- الإشعارات ---- */
+function notifyMessage(msg) {
+  if (!settings.notify || !('Notification' in window) || Notification.permission !== 'granted') return;
+  if (!document.hidden && !(settings.notifyAll && S.cur.channel !== msg.channel)) return;
+  const f = findChannel(msg.channel);
+  const u = userOf(msg.uid);
+  try {
+    const n = new Notification(`${u.display} في #${f?.channel.name || ''}`, {
+      body: msg.text.length > 140 ? msg.text.slice(0, 140) + '…' : msg.text,
+      tag: msg.channel,
+      icon: '/icon.svg',
+      lang: 'ar', dir: 'rtl',
+    });
+    n.onclick = () => { focus(); if (f) { S.cur.server = f.server.id; selectChannel(f.channel.id); } n.close(); };
+  } catch { /* بعض الجوالات ما تدعم الإشعار من الصفحة */ }
+}
+
+/* ---- المظهر ---- */
+function applyLook() {
+  document.documentElement.style.zoom = { sm: 0.9, md: 1, lg: 1.12 }[settings.fontScale] || 1;
+  document.body.classList.toggle('reduce-motion', !!settings.reduceMotion);
+}
+applyLook();
+
+/* ---- الدعم الفني ---- */
+function openHelp() {
+  const links = [];
+  if (SUPPORT.email) links.push(`<a class="btn btn-primary btn-sm" href="mailto:${esc(SUPPORT.email)}?subject=${encodeURIComponent('مشكلة في PLAY WTW')}">راسلنا على الإيميل</a>`);
+  for (const l of SUPPORT.links || []) if (/^https:\/\//.test(l.url)) links.push(`<a class="btn btn-soft btn-sm" href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.label)}</a>`);
+  $('#contactLinks').innerHTML = links.join('');
+  $('#contactBox').classList.toggle('hidden', !links.length);
+  openModal('#helpModal');
+}
+$('#helpBtn').addEventListener('click', openHelp);
+$('#authHelp').addEventListener('click', openHelp);
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && S.cur.channel) { S.unread.delete(S.cur.channel); renderRail(); renderSidebar(); }
 });

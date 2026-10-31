@@ -647,6 +647,49 @@ body.has-pseudo-full { overscroll-behavior: none; }
 .profile-preview b { display: block; font-size: 17px; }
 .profile-preview small { color: var(--muted); }
 
+/* ---------- الإعدادات والدعم ---------- */
+.seg-tabs { flex-wrap: wrap; }
+.seg-tabs button { white-space: nowrap; }
+.settings-block { display: flex; flex-direction: column; gap: 12px; padding-top: 16px; border-top: 1px solid var(--line-2); }
+.settings-block h4 { font-size: 15px; }
+.switch.indent { padding-inline-start: 50px; }
+.switch input:disabled + i { opacity: .4; }
+.switch:has(input:disabled) { cursor: not-allowed; color: var(--muted); }
+.ptt-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ptt-row .btn { min-width: 72px; font-family: var(--font-en); }
+.ptt-row .btn.active { box-shadow: inset 0 0 0 2px var(--cta); }
+.shortcuts { display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; align-items: center; }
+.shortcuts dt { direction: ltr; text-align: end; }
+.shortcuts dd { color: var(--muted); }
+#confirmInput { margin-top: -4px; }
+.btn-link { align-self: center; color: var(--muted); font-size: 14px; text-decoration: underline; text-underline-offset: 3px; }
+.btn-link:hover { color: var(--text); }
+
+.faq { display: flex; flex-direction: column; gap: 6px; }
+.faq details { border-radius: 12px; background: var(--bg-0); border: 1px solid var(--line); }
+.faq details[open] { border-color: var(--line-2); }
+.faq summary {
+  list-style: none; cursor: pointer; padding: 12px 14px; font-weight: 600;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+}
+.faq summary::-webkit-details-marker { display: none; }
+.faq summary::after { content: "+"; color: var(--muted); font-size: 20px; line-height: 1; transition: transform .2s; }
+.faq details[open] summary::after { transform: rotate(45deg); }
+.faq summary:hover { color: var(--cta); }
+.faq ol, .faq p { padding: 0 14px 14px; color: #d6d1ee; font-size: 14px; line-height: 1.8; }
+.faq ol { padding-inline-start: 34px; }
+.faq b { color: var(--text); }
+.contact-box { padding: 16px; border-radius: 14px; background: linear-gradient(140deg, rgba(255, 181, 71, .1), rgba(139, 108, 255, .1)); border: 1px solid var(--line-2); display: flex; flex-direction: column; gap: 6px; }
+.contact-links { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+
+/* اضغط عشان تتكلم: المايك يتلوّن وانت ضاغط */
+.app.ptt-on #micBtn, .app.ptt-on #dMic { color: var(--ok); box-shadow: inset 0 0 0 2px var(--ok); }
+
+/* تقليل الحركة من الإعدادات */
+body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after {
+  animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important;
+}
+
 /* ---------- القائمة المنبثقة ---------- */
 .pop {
   position: fixed; z-index: 90; width: 270px; padding: 14px;
@@ -704,6 +747,10 @@ body.has-pseudo-full { overscroll-behavior: none; }
   .only-mobile { display: grid; }
   .chan-topic { display: none; }
   .stage { padding: 10px; padding-bottom: 86px; }
+  /* في الجوال البث يحافظ على شكله العريض بدل ما يتمدد على طول الشاشة */
+  .stage.has-screens .screens { flex: 0 0 auto; grid-auto-rows: auto; }
+  .stage.has-screens .screen-tile { aspect-ratio: 16 / 9; min-height: 0; }
+  .stage.has-screens .screens.has-focus .screen-tile, .screen-tile.pseudo-full { aspect-ratio: auto; }
   .dock { bottom: max(10px, env(safe-area-inset-bottom)); gap: 6px; padding: 6px; }
   .dock-btn { width: 46px; height: 46px; }
   .composer { margin: 0 10px 10px; }

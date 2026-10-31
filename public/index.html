@@ -6,7 +6,7 @@
   <title>PLAY WTW — Play with me and talk with me</title>
   <meta name="description" content="قروبات ورومات صوت وشات وبث شاشة لين 4K مع أصحابك.">
   <meta name="theme-color" content="#0b0918">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23ffb547'/%3E%3Cstop offset='.5' stop-color='%23ff5d8f'/%3E%3Cstop offset='1' stop-color='%238b6cff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='18' fill='url(%23g)'/%3E%3Cpath d='M24 18l24 14-24 14z' fill='white'/%3E%3C/svg%3E">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Readex+Pro:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -80,6 +80,7 @@
         <p class="hint reg-only hidden">اسم المستخدم: 3–20 حرف إنجليزي صغير أو أرقام أو _ . — كلمة المرور 8 أحرف أو أكثر.</p>
         <p id="authError" class="form-error" role="alert"></p>
         <button id="authSubmit" class="btn btn-primary btn-lg" type="submit">دخول</button>
+        <button id="authHelp" class="btn-link" type="button">تحتاج مساعدة؟</button>
       </form>
     </div>
     </div>
@@ -143,6 +144,7 @@
         <b id="chanName"></b>
         <span id="chanTopic" class="muted chan-topic"></span>
         <span class="spacer"></span>
+        <button id="helpBtn" class="icon-btn ghost" type="button" title="الدعم الفني" aria-label="الدعم الفني" data-icon="help"></button>
         <button id="membersToggle" class="icon-btn ghost" type="button" title="الأعضاء" data-icon="users"></button>
       </header>
 
@@ -252,6 +254,7 @@
     <div class="modal-card narrow">
       <h3 id="confirmTitle"></h3>
       <p id="confirmText" class="muted"></p>
+      <input id="confirmInput" class="input hidden" type="password" dir="ltr" autocomplete="current-password" placeholder="كلمة المرور">
       <div class="modal-foot"><button type="button" class="btn btn-soft" data-close>إلغاء</button><button id="confirmOk" class="btn btn-danger" type="button">تأكيد</button></div>
     </div>
   </div>
@@ -303,6 +306,8 @@
       <div class="seg-tabs">
         <button type="button" class="active" data-pane="voice">الصوت والمايك</button>
         <button type="button" data-pane="profile">حسابي</button>
+        <button type="button" data-pane="notify">الإشعارات</button>
+        <button type="button" data-pane="look">المظهر والاختصارات</button>
       </div>
 
       <div class="pane" data-pane="voice">
@@ -340,7 +345,6 @@
         <div class="field toggles">
           <label class="switch"><input type="checkbox" id="optEc"><i></i><span>منع الصدى</span></label>
           <label class="switch"><input type="checkbox" id="optAgc"><i></i><span>ضبط مستوى المايك تلقائياً</span></label>
-          <label class="switch"><input type="checkbox" id="optSounds"><i></i><span>أصوات التنبيه</span></label>
         </div>
 
         <div class="mic-test">
@@ -354,11 +358,132 @@
           <div class="profile-preview"><div id="profileAvatar"></div><div><b id="profileName"></b><small id="profileUser" dir="ltr"></small></div></div>
           <label class="field"><span class="label">الاسم اللي يظهر</span><input id="profileDisplay" class="input" maxlength="32" required></label>
           <label class="field"><span class="label">لون الصورة</span><input id="profileHue" type="range" min="0" max="359"></label>
-          <div class="modal-foot"><button id="logoutBtn" class="btn btn-danger-soft" type="button">تسجيل الخروج</button><span class="spacer"></span><button class="btn btn-primary" type="submit">حفظ</button></div>
+          <div class="modal-foot"><button class="btn btn-primary" type="submit">حفظ</button></div>
         </form>
+
+        <form id="passwordForm" class="settings-block">
+          <h4>تغيير كلمة المرور</h4>
+          <input type="text" name="username" autocomplete="username" hidden>
+          <div class="grid-2">
+            <label class="field"><span class="label">كلمة المرور الحالية</span><input name="current" type="password" class="input" dir="ltr" autocomplete="current-password" required></label>
+            <label class="field"><span class="label">كلمة المرور الجديدة</span><input name="next" type="password" class="input" dir="ltr" autocomplete="new-password" minlength="8" required></label>
+          </div>
+          <p class="hint">8 أحرف أو أكثر. بعد التغيير بنطلّعك من أي جهاز ثاني مسجّل فيه.</p>
+          <p id="passwordError" class="form-error" role="alert"></p>
+          <div class="modal-foot"><button class="btn btn-soft" type="submit">غيّر كلمة المرور</button></div>
+        </form>
+
+        <div class="settings-block">
+          <div class="modal-foot">
+            <button id="logoutBtn" class="btn btn-soft" type="button">تسجيل الخروج</button>
+            <span class="spacer"></span>
+            <button id="deleteAccountBtn" class="btn btn-danger-soft" type="button">حذف الحساب</button>
+          </div>
+        </div>
       </div>
 
-      <p class="hint">اختصارات: <kbd>M</kbd> المايك · <kbd>D</kbd> كتم الصوت</p>
+      <div class="pane hidden" data-pane="notify">
+        <div class="field toggles">
+          <label class="switch"><input type="checkbox" id="optSounds"><i></i><span>أصوات التنبيه (دخول وطلوع ورسايل)</span></label>
+          <label class="switch"><input type="checkbox" id="optNotify"><i></i><span>إشعار على الجهاز لما توصل رسالة</span></label>
+          <label class="switch indent"><input type="checkbox" id="optNotifyAll"><i></i><span>حتى لو الموقع مفتوح قدامي</span></label>
+        </div>
+        <p id="notifyHint" class="hint">الإشعار يطلع لما تكون في تاب ثاني أو الموقع مصغّر.</p>
+      </div>
+
+      <div class="pane hidden" data-pane="look">
+        <div class="field">
+          <span class="label">حجم الخط</span>
+          <div class="seg">
+            <label><input type="radio" name="fontScale" value="sm"><span>صغير</span></label>
+            <label><input type="radio" name="fontScale" value="md"><span>عادي</span></label>
+            <label><input type="radio" name="fontScale" value="lg"><span>كبير</span></label>
+          </div>
+        </div>
+        <label class="switch"><input type="checkbox" id="optReduceMotion"><i></i><span>تقليل الحركة (بدون أنيميشن)</span></label>
+
+        <div class="settings-block">
+          <h4>اضغط عشان تتكلم</h4>
+          <label class="switch"><input type="checkbox" id="optPtt"><i></i><span>المايك ما يفتح إلا وانت ضاغط زر</span></label>
+          <div class="ptt-row">
+            <span class="label">الزر</span>
+            <button id="pttKeyBtn" class="btn btn-soft btn-sm" type="button"></button>
+            <span class="hint">اضغط عليه ثم اضغط الزر اللي تبيه</span>
+          </div>
+          <p class="hint">للكمبيوتر. يشتغل لما تكون داخل الموقع.</p>
+        </div>
+
+        <div class="settings-block">
+          <h4>الاختصارات</h4>
+          <dl class="shortcuts">
+            <dt><kbd>M</kbd></dt><dd>فتح وقفل المايك</dd>
+            <dt><kbd>D</kbd></dt><dd>كتم الصوت</dd>
+            <dt><kbd>Esc</kbd></dt><dd>سكّر النوافذ وملء الشاشة</dd>
+            <dt><kbd>Enter</kbd></dt><dd>ارسال الرسالة</dd>
+            <dt><kbd>Shift</kbd> + <kbd>Enter</kbd></dt><dd>سطر جديد في الرسالة</dd>
+          </dl>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="helpModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+    <div class="modal-card wide">
+      <div class="modal-head"><h3 id="helpTitle">الدعم الفني</h3><button type="button" class="icon-btn ghost sm" data-close aria-label="سكّر" data-icon="x"></button></div>
+      <p class="muted">حلول أكثر المشاكل اللي تصير. اضغط على السؤال يطلع لك الحل.</p>
+      <div class="faq">
+        <details>
+          <summary>خويي ما يسمعني</summary>
+          <ol>
+            <li>تأكد إن المايك مو مقفول (زر المايك تحت مو أحمر).</li>
+            <li>افتح <b>الإعدادات ← الصوت والمايك</b> واضغط <b>جرّب المايك</b>. إذا ما سمعت نفسك، غيّر المايك من القائمة.</li>
+            <li>شوف شريط <b>حساسية المايك</b>: لازم يصير أخضر وانت تتكلم. إذا ما وصل، حرّك الخط الأبيض لليسار.</li>
+            <li>إذا المتصفح منع المايك: اضغط أيقونة القفل جنب رابط الموقع واسمح للمايك، وحدّث الصفحة.</li>
+          </ol>
+        </details>
+        <details>
+          <summary>ما أسمع أحد</summary>
+          <ol>
+            <li>تأكد إن زر السماعة تحت مو أحمر (كتم الصوت).</li>
+            <li>اضغط على الشخص في الروم وشيّك إن صوته مو مكتوم عندك ومو على 0%.</li>
+            <li>جرّب تغيّر السماعة من <b>الإعدادات ← الصوت والمايك</b>.</li>
+            <li>اضغط أي مكان في الصفحة، بعض المتصفحات ما تشغل الصوت إلا بعد ضغطة.</li>
+          </ol>
+        </details>
+        <details>
+          <summary>ندخل نفس الروم بس ما نسمع بعض أبد</summary>
+          <p>غالباً واحد منكم على شبكة تمنع الاتصال المباشر (كثير منها بيانات الجوال). جرّبوا الواي فاي. وإذا المشكلة تتكرر، صاحب الموقع يقدر يفعّل سيرفر TURN اللي يحلها.</p>
+        </details>
+        <details>
+          <summary>الصوت يتقطع أو فيه تأخير</summary>
+          <ol>
+            <li>إذا أحد يبث شاشة، خلّ الجودة عندك <b>720p</b> أو <b>480p</b> من زر الجودة على البث.</li>
+            <li>اللي يبث: نزّل الفريمات أو الدقة من <b>جودة البث</b>.</li>
+            <li>سكّر البرامج اللي تسحب نت (تحميل، تحديثات).</li>
+          </ol>
+        </details>
+        <details>
+          <summary>صوت الكيبورد أو المكيف يوصل لهم</summary>
+          <p>من <b>الإعدادات ← الصوت والمايك</b> خلّ عزل الضوضاء على <b>ذكاء اصطناعي قوي</b>. وإذا تبي المايك ما يفتح أبد إلا وانت تبيه، فعّل <b>اضغط عشان تتكلم</b> من تبويب المظهر والاختصارات.</p>
+        </details>
+        <details>
+          <summary>ما أقدر أبث شاشتي من الجوال</summary>
+          <p>متصفحات الجوال ما تسمح ببث الشاشة. تقدر تتفرج على بث غيرك وتكبّره بإصبعين، بس البث نفسه لازم يكون من كمبيوتر (كروم أو إيدج أو فايرفوكس).</p>
+        </details>
+        <details>
+          <summary>البث يطلع أسود أو ما يبان</summary>
+          <p>بعض التطبيقات (مثل نتفلكس) تمنع تصوير شاشتها. وفي الماك لازم تسمح للمتصفح من <b>إعدادات النظام ← الخصوصية ← تسجيل الشاشة</b>.</p>
+        </details>
+        <details>
+          <summary>نسيت كلمة المرور</summary>
+          <p>للحين ما فيه استرجاع تلقائي لأن التسجيل بدون إيميل. تواصل مع الدعم تحت. وإذا انت داخل حسابك، تقدر تغيّرها من <b>الإعدادات ← حسابي</b>.</p>
+        </details>
+      </div>
+      <div id="contactBox" class="contact-box hidden">
+        <b>ما لقيت الحل؟</b>
+        <p class="muted">تواصل معنا واشرح المشكلة، ويفضّل ترسل صورة للشاشة.</p>
+        <div id="contactLinks" class="contact-links"></div>
+      </div>
     </div>
   </div>
 
