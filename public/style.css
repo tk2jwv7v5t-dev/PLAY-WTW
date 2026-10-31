@@ -81,6 +81,8 @@ svg.i { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor;
   transition: background .15s, transform .1s, box-shadow .2s, opacity .15s;
 }
 .btn:active:not(:disabled) { transform: scale(.98); }
+a.btn { text-decoration: none; }
+a.btn-soft { color: var(--text); }
 .btn-primary { background: var(--cta); color: var(--cta-ink); box-shadow: 0 6px 20px rgba(255, 181, 71, .22); }
 .btn-primary:hover:not(:disabled) { background: var(--cta-hover); }
 .btn-soft { background: var(--bg-4); }

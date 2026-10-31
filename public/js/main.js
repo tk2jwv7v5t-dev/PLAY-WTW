@@ -1786,7 +1786,11 @@ applyLook();
 function openHelp() {
   const links = [];
   if (SUPPORT.email) links.push(`<a class="btn btn-primary btn-sm" href="mailto:${esc(SUPPORT.email)}?subject=${encodeURIComponent('مشكلة في PLAY WTW')}">راسلنا على الإيميل</a>`);
-  for (const l of SUPPORT.links || []) if (/^https:\/\//.test(l.url)) links.push(`<a class="btn btn-soft btn-sm" href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.label)}</a>`);
+  for (const l of SUPPORT.links || []) {
+    if (!/^https:\/\//.test(l.url)) continue;
+    const style = links.length ? 'btn-soft' : 'btn-primary'; // أول طريقة تواصل تكون الزر الرئيسي
+    links.push(`<a class="btn ${style} btn-sm" href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.label)}</a>`);
+  }
   $('#contactLinks').innerHTML = links.join('');
   $('#contactBox').classList.toggle('hidden', !links.length);
   openModal('#helpModal');
