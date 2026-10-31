@@ -16,7 +16,6 @@ const PRESETS = [
   { label: '4K 60', res: '2160', fps: 60, mode: 'balanced' },
   { label: 'قيمرز', res: '1080', fps: 144, mode: 'motion' },
 ];
-const ICONS = ['🎮', '☕', '🎬', '📚', '💻', '🎧', '⚽', '🔥', '🌙', '🚀', '🎨', '🍿'];
 const NS_LABEL = { gtcrn: 'ذكاء اصطناعي قوي', rnnoise: 'ذكاء اصطناعي خفيف', browser: 'المتصفح', off: 'مقفل' };
 
 const settings = Object.assign({
@@ -242,7 +241,12 @@ function handle(m) {
     }
     case 'server.update': {
       const s = S.servers.get(m.serverId);
-      if (s) { s.name = m.name; s.icon = m.icon; renderAll(); }
+      if (s) { s.name = m.name; renderAll(); }
+      break;
+    }
+    case 'server.icon': {
+      const s = S.servers.get(m.serverId);
+      if (s) { s.iconUrl = m.iconUrl; renderRail(); }
       break;
     }
     case 'member.add': {
@@ -364,7 +368,7 @@ function renderRail() {
     const unread = s.channels.some((c) => S.unread.has(c.id));
     const voice = S.myVoice && s.channels.some((c) => c.id === S.myVoice);
     return `<button class="rail-btn server${s.id === S.cur.server ? ' active' : ''}${unread ? ' unread' : ''}" type="button" data-server="${s.id}" title="${esc(s.name)}">
-      ${s.icon ? `<span class="emoji">${esc(s.icon)}</span>` : `<span>${esc([...s.name][0] || '؟')}</span>`}
+      ${s.iconUrl ? `<img src="${esc(s.iconUrl)}" alt="">` : `<span>${esc([...s.name][0] || '؟')}</span>`}
       ${voice ? `<i class="rail-voice">${I.volume}</i>` : ''}
     </button>`;
   }).join('');
@@ -1321,27 +1325,103 @@ function confirmBox(title, text, okText = 'تأكيد', askPassword = false) {
   });
 }
 
-function iconPicker(el, selected) {
-  el.innerHTML = ['', ...ICONS].map((i) => `<label><input type="radio" name="icon" value="${i}"${i === selected ? ' checked' : ''}><span>${i || 'Aa'}</span></label>`).join('');
+/* ---- صورة القروب ----
+   نقصّ الصورة مربعة ونصغّرها في المتصفح قبل الرفع، فتصير خفيفة وسريعة. */
+const ICON_SIZE = 256;
+async function shrinkImage(file) {
+  if (!file.type.startsWith('image/')) throw new Error('bad_image');
+  if (file.size > 15 * 1024 * 1024) throw new Error('image_too_big');
+  let bmp;
+  try { bmp = await createImageBitmap(file); } catch { throw new Error('bad_image'); }
+  const side = Math.min(bmp.width, bmp.height);
+  const c = document.createElement('canvas');
+  c.width = c.height = ICON_SIZE;
+  const g = c.getContext('2d');
+  g.imageSmoothingQuality = 'high';
+  g.drawImage(bmp, (bmp.width - side) / 2, (bmp.height - side) / 2, side, side, 0, 0, ICON_SIZE, ICON_SIZE);
+  bmp.close?.();
+  const webp = c.toDataURL('image/webp', 0.86);
+  // سفاري القديم ما يدعم WebP، فيرجع PNG كبير: نستخدم JPG بداله
+  return webp.startsWith('data:image/webp') ? webp : c.toDataURL('image/jpeg', 0.88);
+}
+
+// أداة اختيار الصورة: state = keep (بدون تغيير) / new (صورة جديدة) / remove (بدون صورة)
+function setupUploader(root) {
+  const input = $('input[type=file]', root), img = $('img', root);
+  const u = { root, state: 'keep', data: null, url: null, name: '' };
+  const paint = () => {
+    const src = u.state === 'new' ? u.data : u.state === 'keep' ? u.url : null;
+    img.hidden = !src;
+    if (src) img.src = src;
+    $('.iu-letter', root).textContent = [...(u.name.trim() || '؟')][0];
+    $('[data-iu="remove"]', root).hidden = !src;
+  };
+  u.reset = (url, name) => { u.state = 'keep'; u.data = null; u.url = url; u.name = name || ''; input.value = ''; paint(); };
+  u.setName = (name) => { u.name = name; paint(); };
+  root.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-iu]');
+    if (!b) return;
+    if (b.dataset.iu === 'pick') input.click();
+    if (b.dataset.iu === 'remove') { u.state = 'remove'; u.data = null; input.value = ''; paint(); }
+  });
+  input.addEventListener('change', async () => {
+    const file = input.files[0];
+    if (!file) return;
+    try {
+      u.data = await shrinkImage(file);
+      u.state = 'new';
+      paint();
+    } catch (err) { toast(ERRORS[err.message] || ERRORS.bad_image, 'err'); }
+  });
+  // تقدر تسحب الصورة وتفلتها على المربع
+  root.addEventListener('dragover', (e) => { e.preventDefault(); root.classList.add('drop'); });
+  root.addEventListener('dragleave', () => root.classList.remove('drop'));
+  root.addEventListener('drop', (e) => {
+    e.preventDefault();
+    root.classList.remove('drop');
+    const file = e.dataTransfer.files[0];
+    if (file) { const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files; input.dispatchEvent(new Event('change')); }
+  });
+  return u;
+}
+const newIcon = setupUploader($('#newIcon'));
+const editIcon = setupUploader($('#editIcon'));
+$('#createServerForm').name.addEventListener('input', (e) => newIcon.setName(e.target.value));
+$('#renameForm').name.addEventListener('input', (e) => editIcon.setName(e.target.value));
+
+// نرفع التغيير (لو فيه) بعد ما ينحفظ القروب
+async function saveIcon(serverId, u) {
+  if (u.state === 'keep') return;
+  const r = await fetch(`/api/icon/${serverId}`, {
+    method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(u.state === 'new' ? { image: u.data } : { remove: true }),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    throw new Error(d.error || 'server_error');
+  }
 }
 
 /* ---- قروب جديد / دخول ---- */
 function openServerModal(pane = 'create') {
   $('#createServerForm').reset();
   $('#joinServerForm').reset();
-  iconPicker($('#iconPicker'), ICONS[Math.floor(Math.random() * ICONS.length)]);
+  newIcon.reset(null, '');
   openModal('#serverModal');
   $(`#serverModal .seg-tabs [data-pane="${pane}"]`).click();
 }
 $('#createServerForm').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const f = e.target;
+  const f = e.target, btn = $('button[type=submit]', f);
+  btn.disabled = true;
   try {
-    const s = await request({ t: 'server.create', name: f.name.value, icon: f.icon.value });
+    const s = await request({ t: 'server.create', name: f.name.value });
+    try { await saveIcon(s.id, newIcon); } catch (err) { toast(`سوّينا القروب بس الصورة ما انرفعت: ${ERRORS[err.message] || ERRORS.network}`, 'err'); }
     closeModals();
     selectServer(s.id);
     toast(`سوّينا ${s.name} 🎉 ادعُ أصحابك من قائمة القروب`, 'ok');
   } catch (err) { toast(ERRORS[err.message] || ERRORS.network, 'err'); }
+  finally { btn.disabled = false; }
 });
 $('#joinServerForm').addEventListener('submit', (e) => {
   e.preventDefault();
@@ -1375,8 +1455,8 @@ $('#serverMenu').addEventListener('click', async (e) => {
     case 'newText': openChannelModal('text'); break;
     case 'newVoice': openChannelModal('voice'); break;
     case 'rename':
-      iconPicker($('#iconPicker2'), s.icon);
       $('#renameForm').name.value = s.name;
+      editIcon.reset(s.iconUrl, s.name);
       openModal('#renameModal');
       break;
     case 'leave':
@@ -1387,10 +1467,19 @@ $('#serverMenu').addEventListener('click', async (e) => {
       break;
   }
 });
-$('#renameForm').addEventListener('submit', (e) => {
+$('#renameForm').addEventListener('submit', async (e) => {
   e.preventDefault();
-  send({ t: 'server.update', serverId: S.cur.server, name: e.target.name.value, icon: e.target.icon.value });
-  closeModals();
+  const f = e.target, btn = $('button[type=submit]', f);
+  const s = curServer();
+  if (!s) return;
+  btn.disabled = true;
+  try {
+    if (f.name.value.trim() !== s.name) send({ t: 'server.update', serverId: s.id, name: f.name.value });
+    await saveIcon(s.id, editIcon);
+    closeModals();
+    toast('انحفظ ✅', 'ok');
+  } catch (err) { toast(ERRORS[err.message] || ERRORS.network, 'err'); }
+  finally { btn.disabled = false; }
 });
 function openInvite(s) {
   $('#inviteLink').value = `${location.origin}/?invite=${s.invite}`;

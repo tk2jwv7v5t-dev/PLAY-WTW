@@ -20,6 +20,15 @@ const STUN_ONLY = [
   { urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'] },
 ];
 const TURN_TTL = 86400; // صلاحية بيانات TURN بالثواني
+const MAX_ICON_BYTES = 300 * 1024; // المتصفح يصغّر الصورة قبل الرفع، فهذا حد احتياطي
+
+// نتأكد إن الملف صورة فعلاً من أول بايتات فيه، مو من اسمه
+function imageType(b) {
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'image/png';
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
+  if (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50) return 'image/webp';
+  return null;
+}
 
 export default {
   async fetch(req, env) {
@@ -101,6 +110,8 @@ export class Hub extends DurableObject {
       CREATE TABLE IF NOT EXISTS messages (
         id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, user_id TEXT NOT NULL, text TEXT NOT NULL, ts INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS messages_channel ON messages (channel_id, ts);
+      CREATE TABLE IF NOT EXISTS server_icons (
+        server_id TEXT PRIMARY KEY, data BLOB NOT NULL, type TEXT NOT NULL, updated INTEGER NOT NULL);
     `);
   }
 
@@ -114,6 +125,8 @@ export class Hub extends DurableObject {
         if (!(await this.authed(req))) return fail('unauthorized', 401);
         return json({ iceServers: await this.iceServers() });
       }
+      const icon = url.pathname.match(/^\/api\/icon\/([\w-]{1,64})$/);
+      if (icon && req.method === 'GET') return this.getIcon(req, icon[1]);
       if (route === 'GET /api/me') {
         const user = await this.authed(req);
         return user ? json({ user: this.publicUser(user) }) : fail('unauthorized', 401);
@@ -126,6 +139,7 @@ export class Hub extends DurableObject {
         if (route === 'POST /api/logout') return this.logout(req);
         if (route === 'POST /api/password') return this.changePassword(req);
         if (route === 'POST /api/account/delete') return this.deleteAccount(req);
+        if (icon) return this.setIcon(req, icon[1]);
       }
       return fail('not_found', 404);
     } catch (e) {
@@ -231,12 +245,7 @@ export class Hub extends DurableObject {
     // القروبات اللي يملكها تنحذف بالكامل، واللي هو عضو فيها يطلع منها
     const owned = this.sql.exec('SELECT id FROM servers WHERE owner_id = ?', user.id).toArray().map((r) => r.id);
     for (const sid of owned) {
-      this.kickFromVoice(sid, null);
-      this.toServer(sid, { t: 'server.remove', serverId: sid });
-      this.sql.exec('DELETE FROM messages WHERE channel_id IN (SELECT id FROM channels WHERE server_id = ?)', sid);
-      this.sql.exec('DELETE FROM channels WHERE server_id = ?', sid);
-      this.sql.exec('DELETE FROM members WHERE server_id = ?', sid);
-      this.sql.exec('DELETE FROM servers WHERE id = ?', sid);
+      this.purgeServer(sid);
     }
     const joined = this.sql.exec('SELECT server_id FROM members WHERE user_id = ?', user.id).toArray().map((r) => r.server_id);
     for (const sid of joined) {
@@ -294,6 +303,62 @@ export class Hub extends DurableObject {
       console.error('turn', e);
       return STUN_ONLY;
     }
+  }
+
+  /* ---------- صورة القروب ---------- */
+  iconUrl(serverId) {
+    const row = this.sql.exec('SELECT updated FROM server_icons WHERE server_id = ?', serverId).toArray()[0];
+    return row ? `/api/icon/${serverId}?v=${row.updated}` : null;
+  }
+
+  async getIcon(req, serverId) {
+    const user = await this.authed(req);
+    // الصورة تبان لأعضاء القروب بس
+    if (!user || !this.isMember(serverId, user.id)) return fail('not_found', 404);
+    const row = this.sql.exec('SELECT data, type FROM server_icons WHERE server_id = ?', serverId).toArray()[0];
+    if (!row) return fail('not_found', 404);
+    return new Response(row.data, {
+      headers: {
+        'content-type': row.type,
+        'cache-control': 'private, max-age=31536000, immutable',
+        'x-content-type-options': 'nosniff',
+      },
+    });
+  }
+
+  // { image: "data:image/webp;base64,..." } للرفع، أو { remove: true } للحذف
+  async setIcon(req, serverId) {
+    const user = await this.authed(req);
+    if (!user) return fail('unauthorized', 401);
+    if (!this.isOwner(serverId, user.id)) return fail('forbidden', 403);
+    const b = await this.body(req);
+    if (b.remove) {
+      this.sql.exec('DELETE FROM server_icons WHERE server_id = ?', serverId);
+    } else {
+      const m = String(b.image || '').match(/^data:image\/[a-z]+;base64,([A-Za-z0-9+/=]+)$/);
+      if (!m) return fail('bad_image');
+      let bytes;
+      try { bytes = unb64(m[1]); } catch { return fail('bad_image'); }
+      if (bytes.byteLength > MAX_ICON_BYTES) return fail('image_too_big');
+      const type = imageType(bytes);
+      if (!type) return fail('bad_image');
+      this.sql.exec('INSERT OR REPLACE INTO server_icons (server_id, data, type, updated) VALUES (?, ?, ?, ?)',
+        serverId, bytes.buffer, type, Date.now());
+    }
+    const iconUrl = this.iconUrl(serverId);
+    this.toServer(serverId, { t: 'server.icon', serverId, iconUrl });
+    return json({ iconUrl });
+  }
+
+  // نحذف القروب وكل شي فيه، ونبلغ أعضاءه
+  purgeServer(sid) {
+    this.kickFromVoice(sid, null);
+    this.toServer(sid, { t: 'server.remove', serverId: sid });
+    this.sql.exec('DELETE FROM messages WHERE channel_id IN (SELECT id FROM channels WHERE server_id = ?)', sid);
+    this.sql.exec('DELETE FROM channels WHERE server_id = ?', sid);
+    this.sql.exec('DELETE FROM members WHERE server_id = ?', sid);
+    this.sql.exec('DELETE FROM server_icons WHERE server_id = ?', sid);
+    this.sql.exec('DELETE FROM servers WHERE id = ?', sid);
   }
 
   publicUser(u) {
@@ -355,7 +420,7 @@ export class Hub extends DurableObject {
     const members = this.sql.exec(
       'SELECT u.id, u.username, u.display, u.hue FROM members m JOIN users u ON u.id = m.user_id WHERE m.server_id = ? ORDER BY m.joined', serverId,
     ).toArray();
-    return { id: s.id, name: s.name, icon: s.icon, owner: s.owner_id, invite: s.invite, channels, members };
+    return { id: s.id, name: s.name, iconUrl: this.iconUrl(s.id), owner: s.owner_id, invite: s.invite, channels, members };
   }
 
   voiceStates(channelIds) {
@@ -405,7 +470,7 @@ export class Hub extends DurableObject {
         if (owned >= MAX_OWNED_SERVERS) return error('too_many_servers');
         const id = newId(), now = Date.now();
         this.sql.exec('INSERT INTO servers (id, name, icon, owner_id, invite, created) VALUES (?, ?, ?, ?, ?, ?)',
-          id, name, clean(m.icon, 8), att.uid, randomCode(8), now);
+          id, name, '', att.uid, randomCode(8), now);
         this.sql.exec('INSERT INTO members (server_id, user_id, joined) VALUES (?, ?, ?)', id, att.uid, now);
         this.sql.exec('INSERT INTO channels (id, server_id, name, kind, position) VALUES (?, ?, ?, ?, 0), (?, ?, ?, ?, 1)',
           newId(), id, 'العام', 'text', newId(), id, 'الصوتي', 'voice');
@@ -436,20 +501,15 @@ export class Hub extends DurableObject {
       }
       case 'server.delete': {
         if (!this.isOwner(m.serverId, att.uid)) return error('forbidden');
-        this.kickFromVoice(m.serverId, null);
-        this.toServer(m.serverId, { t: 'server.remove', serverId: m.serverId });
-        this.sql.exec('DELETE FROM messages WHERE channel_id IN (SELECT id FROM channels WHERE server_id = ?)', m.serverId);
-        this.sql.exec('DELETE FROM channels WHERE server_id = ?', m.serverId);
-        this.sql.exec('DELETE FROM members WHERE server_id = ?', m.serverId);
-        this.sql.exec('DELETE FROM servers WHERE id = ?', m.serverId);
+        this.purgeServer(m.serverId);
         return;
       }
       case 'server.update': {
         if (!this.isOwner(m.serverId, att.uid)) return error('forbidden');
         const name = clean(m.name, 40);
         if (!name) return error('bad_name');
-        this.sql.exec('UPDATE servers SET name = ?, icon = ? WHERE id = ?', name, clean(m.icon, 8), m.serverId);
-        this.toServer(m.serverId, { t: 'server.update', serverId: m.serverId, name, icon: clean(m.icon, 8) });
+        this.sql.exec('UPDATE servers SET name = ? WHERE id = ?', name, m.serverId);
+        this.toServer(m.serverId, { t: 'server.update', serverId: m.serverId, name });
         return;
       }
 

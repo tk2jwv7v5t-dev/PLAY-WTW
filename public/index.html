@@ -209,7 +209,20 @@
         <button type="button" data-pane="join">ادخل بكود</button>
       </div>
       <form id="createServerForm" class="pane" data-pane="create">
-        <div class="icon-picker" id="iconPicker"></div>
+        <div class="icon-upload" id="newIcon">
+          <button type="button" class="iu-preview" data-iu="pick" aria-label="اختر صورة للقروب">
+            <span class="iu-letter"></span><img alt="" hidden><span class="iu-cam" data-icon="camera"></span>
+          </button>
+          <div class="iu-info">
+            <b>صورة القروب</b>
+            <small class="muted">من جهازك: PNG أو JPG أو WebP. بنقصّها مربعة لحالها.</small>
+            <div class="iu-btns">
+              <button type="button" class="btn btn-soft btn-sm" data-iu="pick">ارفع صورة</button>
+              <button type="button" class="btn-link" data-iu="remove" hidden>شيل الصورة</button>
+            </div>
+          </div>
+          <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+        </div>
         <label class="field"><span class="label">اسم القروب</span><input name="name" class="input" maxlength="40" required placeholder="مثال: شلة الويكند"></label>
         <div class="modal-foot"><button class="btn btn-primary" type="submit">سوّه</button></div>
       </form>
@@ -235,7 +248,20 @@
   <div id="renameModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="renameTitle">
     <form id="renameForm" class="modal-card">
       <div class="modal-head"><h3 id="renameTitle">تعديل القروب</h3><button type="button" class="icon-btn ghost sm" data-close aria-label="سكّر" data-icon="x"></button></div>
-      <div class="icon-picker" id="iconPicker2"></div>
+      <div class="icon-upload" id="editIcon">
+          <button type="button" class="iu-preview" data-iu="pick" aria-label="اختر صورة للقروب">
+            <span class="iu-letter"></span><img alt="" hidden><span class="iu-cam" data-icon="camera"></span>
+          </button>
+          <div class="iu-info">
+            <b>صورة القروب</b>
+            <small class="muted">من جهازك: PNG أو JPG أو WebP. بنقصّها مربعة لحالها.</small>
+            <div class="iu-btns">
+              <button type="button" class="btn btn-soft btn-sm" data-iu="pick">ارفع صورة</button>
+              <button type="button" class="btn-link" data-iu="remove" hidden>شيل الصورة</button>
+            </div>
+          </div>
+          <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+        </div>
       <label class="field"><span class="label">اسم القروب</span><input name="name" class="input" maxlength="40" required></label>
       <div class="modal-foot"><button type="button" class="btn btn-soft" data-close>إلغاء</button><button class="btn btn-primary" type="submit">حفظ</button></div>
     </form>
