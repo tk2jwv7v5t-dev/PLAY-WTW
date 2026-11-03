@@ -144,6 +144,7 @@
         <b id="chanName"></b>
         <span id="chanTopic" class="muted chan-topic"></span>
         <span class="spacer"></span>
+        <button id="settingsBtnTop" class="icon-btn ghost only-mobile" type="button" title="الإعدادات" data-icon="cog"></button>
         <button id="helpBtn" class="icon-btn ghost" type="button" title="الدعم الفني" aria-label="الدعم الفني" data-icon="help"></button>
         <button id="membersToggle" class="icon-btn ghost" type="button" title="الأعضاء" data-icon="users"></button>
       </header>
@@ -387,7 +388,7 @@
           <div class="modal-foot"><button class="btn btn-primary" type="submit">حفظ</button></div>
         </form>
 
-        <form id="passwordForm" class="settings-block">
+        <form id="passwordForm" class="settings-block" novalidate>
           <h4>تغيير كلمة المرور</h4>
           <input type="text" name="username" autocomplete="username" hidden>
           <div class="grid-2">

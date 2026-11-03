@@ -67,12 +67,50 @@ export const store = {
   set(k, v) { try { localStorage.setItem('pw:' + k, JSON.stringify(v)); } catch { /* تجاهل */ } },
 };
 
+// تنبيه صغير تحت الشاشة. الأخطاء تبقى وقت أطول، وقارئ الشاشة ينطقها على طول
 export function toast(text, type = '') {
+  const box = $('#toasts');
+  while (box.children.length >= 3) box.firstElementChild.remove();
   const t = document.createElement('div');
   t.className = 'toast ' + type;
-  t.textContent = text;
-  $('#toasts').append(t);
-  setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 300); }, 3800);
+  t.setAttribute('role', type === 'err' ? 'alert' : 'status');
+  const icon = { err: '⚠️', ok: '✓' }[type];
+  if (icon) { const i = document.createElement('span'); i.className = 'toast-icon'; i.textContent = icon; t.append(i); }
+  t.append(document.createTextNode(text));
+  box.append(t);
+  const hide = () => { t.classList.add('out'); setTimeout(() => t.remove(), 300); };
+  const timer = setTimeout(hide, type === 'err' ? 6500 : 3800);
+  t.addEventListener('click', () => { clearTimeout(timer); hide(); });
+}
+
+// كل زر بأيقونة بس: نعطيه وصف لقارئ الشاشة، وتلميح يطلع لما تقف عليه بالماوس
+export function autoLabel(root = document.body) {
+  const fix = (b) => {
+    const title = b.getAttribute('title'), label = b.getAttribute('aria-label');
+    if (title && !label) b.setAttribute('aria-label', title);
+    else if (label && !title) b.setAttribute('title', label);
+  };
+  root.querySelectorAll('button[title], button[aria-label]').forEach(fix);
+  new MutationObserver((list) => {
+    for (const m of list) for (const n of m.addedNodes) {
+      if (n.nodeType !== 1) continue;
+      if (n.matches('button')) fix(n);
+      n.querySelectorAll?.('button[title], button[aria-label]').forEach(fix);
+    }
+  }).observe(root, { childList: true, subtree: true });
+}
+
+// زر يبين إنه يشتغل لين تخلص العملية (ونمنع الضغط مرتين)
+export async function busy(btn, text, fn) {
+  const old = btn.textContent;
+  btn.disabled = true;
+  btn.classList.add('is-busy');
+  if (text) btn.textContent = text;
+  try { return await fn(); } finally {
+    btn.disabled = false;
+    btn.classList.remove('is-busy');
+    if (text) btn.textContent = old;
+  }
 }
 
 let fxCtx = null;
@@ -113,6 +151,11 @@ export const ERRORS = {
   owner_cannot_leave: 'انت صاحب القروب — تقدر تحذفه بدل ما تطلع',
   forbidden: 'ما عندك صلاحية',
   slow_down: 'شوي شوي 😅 انتظر ثواني',
-  server_error: 'صار خطأ في السيرفر، جرّب مرة ثانية',
-  network: 'تأكد من اتصالك بالنت',
+  server_error: 'صار خطأ في السيرفر، جرّب مرة ثانية بعد شوي',
+  network: 'ما قدرنا نوصل للسيرفر. تأكد من اتصالك بالنت وجرّب مرة ثانية',
+  timeout: 'السيرفر تأخر بالرد. جرّب مرة ثانية',
+  unauthorized: 'انتهت جلستك. سجّل دخولك من جديد',
+  bad_origin: 'الطلب انرفض لأسباب أمنية. حدّث الصفحة وجرّب',
+  bad_request: 'صار خطأ في الطلب. حدّث الصفحة وجرّب',
+  not_found: 'الشي اللي تدوره مو موجود أو انحذف',
 };

@@ -1,7 +1,7 @@
 /* =====================================================
    PLAY WTW — الواجهة
    ===================================================== */
-import { I, $, $$, esc, clean, fillIcons, avatar, linkify, timeLabel, store, toast, beep, ERRORS } from './util.js';
+import { I, $, $$, esc, clean, fillIcons, autoLabel, busy, avatar, linkify, timeLabel, store, toast, beep, ERRORS } from './util.js';
 import { startIntro } from './intro.js';
 import { MicPipeline, LevelWatcher } from './audio.js';
 import { VoiceSession } from './voice.js';
@@ -67,6 +67,7 @@ mic.onEnded = () => {
    البداية
    ===================================================== */
 fillIcons();
+autoLabel();
 let introCtl = null;
 const meReq = fetch('/api/me', { credentials: 'same-origin' }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
 meReq.then((d) => { if (d?.user) $('#introGoText').textContent = `ادخل يا ${d.user.display}`; });
@@ -118,6 +119,8 @@ $('#authForm').addEventListener('submit', async (e) => {
   } else if (!username || !password) { err.textContent = 'اكتب اسم المستخدم وكلمة المرور'; return; }
   const btn = $('#authSubmit');
   btn.disabled = true; err.textContent = '';
+  btn.classList.add('is-busy');
+  btn.textContent = authMode === 'login' ? 'جاري الدخول…' : 'جاري إنشاء الحساب…';
   try {
     const r = await fetch(`/api/${authMode}`, {
       method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
@@ -131,6 +134,8 @@ $('#authForm').addEventListener('submit', async (e) => {
     err.textContent = ERRORS.network;
   } finally {
     btn.disabled = false;
+    btn.classList.remove('is-busy');
+    btn.textContent = authMode === 'login' ? 'دخول' : 'سوّ الحساب';
   }
 });
 
@@ -153,10 +158,19 @@ function connect() {
   let opened = false;
   ws.onopen = () => { opened = true; S.wsOpen = true; S.retry = 0; setConn(true); };
   ws.onmessage = (e) => { if (e.data !== 'pong') handle(JSON.parse(e.data)); };
-  ws.onclose = async () => {
+  ws.onclose = async (e) => {
     if (S.ws !== ws) return;
     S.wsOpen = false;
     if (S.loggingOut) return;
+    if (e.code === 4001) {
+      // انطلع من حسابه (تسجيل خروج من جهاز ثاني، أو تغيير كلمة المرور)
+      if (S.myVoice) teardownVoice();
+      S.ws = null;
+      setConn(true);
+      toast('انطلعت من حسابك في هذا الجهاز. سجّل دخولك من جديد', 'err');
+      showAuth();
+      return;
+    }
     setConn(false);
     if (S.myVoice) { S.rejoinVoice = S.myVoice; teardownVoice(); }
     for (const p of S.pending.values()) p.reject(new Error('network'));
@@ -422,6 +436,13 @@ function renderMain() {
   $('#emptyView').classList.toggle('hidden', !!c);
   $('#textView').classList.toggle('hidden', c?.kind !== 'text');
   $('#voiceView').classList.toggle('hidden', c?.kind !== 'voice');
+  // لما تتغير الصفحة أو الروم نعرضها بحركة خفيفة
+  const viewKey = c ? c.id : `empty:${s?.id || ''}`;
+  if (viewKey !== S.lastView) {
+    S.lastView = viewKey;
+    const v = $(c ? (c.kind === 'voice' ? '#voiceView' : '#textView') : '#emptyView');
+    v.classList.remove('view-in'); void v.offsetWidth; v.classList.add('view-in');
+  }
   $('#chanIcon').innerHTML = c ? (c.kind === 'voice' ? I.volume : I.hash) : '';
   $('#chanName').textContent = c ? c.name : s ? s.name : 'PLAY WTW';
   $('#chanTopic').textContent = c?.kind === 'voice' ? 'روم صوتي' : c ? `في ${s.name}` : '';
@@ -439,7 +460,7 @@ function renderMembers() {
   const on = all.filter((u) => S.online.has(u.id)), off = all.filter((u) => !S.online.has(u.id));
   const row = (u) => `<div class="member${S.online.has(u.id) ? '' : ' off'}${u.id === S.me.id ? '' : ' clickable'}"${u.id === S.me.id ? '' : ` data-user="${u.id}" data-pop`}>
     <div class="avatar-wrap">${avatar(u, 'sm')}<i class="status${S.online.has(u.id) ? ' on' : ''}"></i></div>
-    <div class="m-names"><b>${esc(u.display)}${u.id === s.owner ? `<span class="crown" title="صاحب القروب">${I.crown}</span>` : ''}</b><small dir="ltr">@${esc(u.username)}</small></div>
+    <div class="m-names"><b><span class="m-text">${esc(u.display)}</span>${u.id === s.owner ? `<span class="crown" title="صاحب القروب">${I.crown}</span>` : ''}</b><small dir="ltr">@${esc(u.username)}</small></div>
   </div>`;
   el.innerHTML = `<div class="m-head">متصلين — ${on.length}</div>${on.map(row).join('')}
     ${off.length ? `<div class="m-head">غير متصلين — ${off.length}</div>${off.map(row).join('')}` : ''}`;
@@ -1425,11 +1446,11 @@ $('#createServerForm').addEventListener('submit', async (e) => {
 });
 $('#joinServerForm').addEventListener('submit', (e) => {
   e.preventDefault();
-  joinServer(e.target.invite.value);
+  busy($('button[type=submit]', e.target), 'جاري الدخول…', () => joinServer(e.target.invite.value));
 });
 async function joinServer(raw) {
   const code = String(raw).trim().split(/invite=|\//).pop();
-  if (!code) return;
+  if (!code) { toast('اكتب كود الدعوة أو الصق الرابط', 'err'); return; }
   try {
     const s = await request({ t: 'server.join', invite: code });
     closeModals();
@@ -1502,11 +1523,14 @@ function openChannelModal(kind) {
 $('#channelForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const f = e.target;
-  try {
-    const c = await request({ t: 'channel.create', serverId: S.cur.server, name: f.name.value, kind: f.kind.value });
-    closeModals();
-    if (c.kind === 'text') selectChannel(c.id); else renderAll();
-  } catch (err) { toast(ERRORS[err.message] || ERRORS.network, 'err'); }
+  await busy($('button[type=submit]', f), 'جاري الإنشاء…', async () => {
+    try {
+      const c = await request({ t: 'channel.create', serverId: S.cur.server, name: f.name.value, kind: f.kind.value });
+      closeModals();
+      toast(`سوّينا ${c.kind === 'voice' ? 'الروم الصوتي' : 'الروم'} ${c.name}`, 'ok');
+      if (c.kind === 'text') selectChannel(c.id); else renderAll();
+    } catch (err) { toast(ERRORS[err.message] || ERRORS.network, 'err'); }
+  });
 });
 
 /* ---- جودة البث ---- */
@@ -1724,13 +1748,17 @@ async function postJSON(url, body) {
 $('#passwordForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const f = e.target, err = $('#passwordError');
-  if (f.next.value.length < 8) { err.textContent = ERRORS.bad_password; return; }
+  if (!f.current.value) { err.textContent = 'اكتب كلمة المرور الحالية'; f.current.focus(); return; }
+  if (f.next.value.length < 8) { err.textContent = ERRORS.bad_password; f.next.focus(); return; }
+  if (f.next.value === f.current.value) { err.textContent = 'كلمة المرور الجديدة نفس الحالية'; f.next.focus(); return; }
   err.textContent = '';
-  try {
-    await postJSON('/api/password', { current: f.current.value, next: f.next.value });
-    f.reset();
-    toast('تغيّرت كلمة المرور ✅', 'ok');
-  } catch (ex) { err.textContent = ERRORS[ex.message] || ERRORS.network; }
+  await busy($('button[type=submit]', f), 'جاري الحفظ…', async () => {
+    try {
+      await postJSON('/api/password', { current: f.current.value, next: f.next.value });
+      f.reset();
+      toast('تغيّرت كلمة المرور. وطلّعناك من أي جهاز ثاني كان مسجّل', 'ok');
+    } catch (ex) { err.textContent = ERRORS[ex.message] || ERRORS.network; }
+  });
 });
 
 $('#deleteAccountBtn').addEventListener('click', async () => {
@@ -1803,6 +1831,7 @@ for (const id of ['#dShare', '#vpShare']) $(id).addEventListener('click', () => 
 $('#dShareCfg').addEventListener('click', openShareModal);
 for (const id of ['#dLeave', '#vpLeave']) $(id).addEventListener('click', () => leaveVoice());
 $('#settingsBtn').addEventListener('click', openSettings);
+$('#settingsBtnTop').addEventListener('click', openSettings);
 
 $('#membersToggle').addEventListener('click', () => {
   const app = $('#app');

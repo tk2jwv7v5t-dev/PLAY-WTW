@@ -559,7 +559,9 @@ body.has-pseudo-full { overscroll-behavior: none; }
 .member { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px; }
 .member:hover { background: var(--bg-3); }
 .member.off { opacity: .45; }
-.m-names { min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.m-names { min-width: 0; flex: 1; display: flex; flex-direction: column; line-height: 1.25; }
+.m-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.member { min-width: 0; }
 .m-names b { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 4px; overflow: hidden; white-space: nowrap; }
 .m-names small { color: var(--muted); font-size: 12px; text-align: end; }
 .crown { color: var(--warn); display: grid; }
@@ -708,6 +710,23 @@ body.has-pseudo-full { overscroll-behavior: none; }
 /* تقليل الحركة من الإعدادات */
 body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after {
   animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important;
+}
+
+/* ---------- انتقالات وحالات ---------- */
+.view-in { animation: viewIn .22s var(--ease); }
+@keyframes viewIn { from { opacity: 0; transform: translateY(6px); } }
+#app:not(.hidden) { animation: fadeIn .35s ease; }
+.btn.is-busy { cursor: progress; opacity: .8; }
+.btn.is-busy::before {
+  content: ""; width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid currentColor; border-inline-end-color: transparent;
+  animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.toast { display: flex; align-items: center; gap: 8px; pointer-events: auto; cursor: pointer; }
+.toast-icon { flex: none; }
+@media (prefers-reduced-motion: reduce) {
+  .view-in, #app:not(.hidden), .modal, .modal-card, .toast { animation: none !important; }
 }
 
 /* ---------- القائمة المنبثقة ---------- */

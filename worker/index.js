@@ -43,7 +43,16 @@ export default {
 /* ---------- أدوات ---------- */
 const enc = new TextEncoder();
 const json = (data, status = 200, headers = {}) =>
-  new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers } });
+  new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+      'referrer-policy': 'no-referrer',
+      ...headers,
+    },
+  });
 const fail = (code, status = 400) => json({ error: code }, status);
 
 const b64 = (bytes) => btoa(String.fromCharCode(...bytes));
@@ -66,8 +75,13 @@ async function hashPassword(password, salt) {
 function sameBytes(a, b) {
   return a.byteLength === b.byteLength && crypto.subtle.timingSafeEqual(a, b);
 }
-const clean = (s, max) => String(s ?? '').replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, max);
-const cleanText = (s) => String(s ?? '').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim().slice(0, MAX_MESSAGE);
+// رموز تحكم ورموز قلب اتجاه النص المخفية (تُستخدم أحياناً عشان يتنكّر اسم بشكل ثاني)
+const HIDDEN = /[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069\ufeff]/g;
+const cut = (s, max) => (s.length <= max ? s : Array.from(s).slice(0, max).join(''));
+const clean = (s, max) => cut(String(s ?? '').replace(HIDDEN, '').replace(/\s+/g, ' ').trim(), max);
+const cleanText = (s) => cut(String(s ?? '').replace(/[\u0000-\u0008\u000b-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, '').trim(), MAX_MESSAGE);
+// المعرّفات اللي تجي من المتصفح: نص قصير بس، وإلا نرفضها
+const asId = (v) => (typeof v === 'string' && v.length <= 80 ? v : '');
 function cookie(req, name) {
   const m = (req.headers.get('cookie') || '').match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`));
   return m ? m[1] : null;
@@ -134,6 +148,8 @@ export class Hub extends DurableObject {
       if (req.method === 'POST') {
         // نطلب JSON عشان نمنع الطلبات من مواقع ثانية (CSRF)
         if (!(req.headers.get('content-type') || '').includes('application/json')) return fail('bad_request');
+        const origin = req.headers.get('origin');
+        if (origin && origin !== url.origin) return fail('bad_origin', 403);
         if (route === 'POST /api/register') return this.register(req);
         if (route === 'POST /api/login') return this.login(req);
         if (route === 'POST /api/logout') return this.logout(req);
@@ -233,6 +249,8 @@ export class Hub extends DurableObject {
     // نطلّع كل الأجهزة الثانية، ونخلي هذا الجهاز مسجّل
     const keep = await sha256(cookie(req, 'sid'));
     this.sql.exec('DELETE FROM sessions WHERE user_id = ? AND token != ?', user.id, keep);
+    // والأجهزة الثانية اللي فاتحة الموقع الحين تنقطع على طول
+    this.closeSessions((att) => att.uid === user.id && att.tok !== keep);
     return json({ ok: true });
   }
 
@@ -262,8 +280,18 @@ export class Hub extends DurableObject {
 
   async logout(req) {
     const token = cookie(req, 'sid');
-    if (token) this.sql.exec('DELETE FROM sessions WHERE token = ?', await sha256(token));
+    if (token) {
+      const hashed = await sha256(token);
+      this.sql.exec('DELETE FROM sessions WHERE token = ?', hashed);
+      this.closeSessions((att) => att.tok === hashed);
+    }
     return json({ ok: true }, 200, { 'set-cookie': sessionCookie(req, '', 0) });
+  }
+
+  closeSessions(match) {
+    for (const s of this.sockets()) {
+      if (match(s.att)) { try { s.ws.close(4001, 'signed_out'); } catch { /* تسكر */ } }
+    }
   }
 
   async authed(req) {
@@ -374,7 +402,10 @@ export class Hub extends DurableObject {
     if (!user) return fail('unauthorized', 401);
 
     const pair = new WebSocketPair();
-    const att = { sid: b64url(randomBytes(9)), uid: user.id, voice: null, mic: true, deaf: false, sharing: false, screen: null };
+    const att = {
+      sid: b64url(randomBytes(9)), uid: user.id, tok: await sha256(cookie(req, 'sid')),
+      voice: null, mic: true, deaf: false, sharing: false, screen: null,
+    };
     this.ctx.acceptWebSocket(pair[1]);
     pair[1].serializeAttachment(att);
 
@@ -455,9 +486,26 @@ export class Hub extends DurableObject {
     let m;
     try { m = JSON.parse(raw); } catch { return; }
     const att = ws.deserializeAttachment();
-    if (!att || !m || typeof m.t !== 'string') return;
+    if (!att || !m || typeof m !== 'object' || typeof m.t !== 'string') return;
+    // حد عام: 300 رسالة كل 10 ثواني (الاتصال بين الأجهزة يرسل كثير وقت البداية)
+    const now = Date.now();
+    if (!att.win || now - att.win > 10000) { att.win = now; att.count = 0; }
+    if (++att.count > 300) { ws.serializeAttachment(att); return; }
+    if (att.count % 50 === 0) ws.serializeAttachment(att);
     const user = this.sql.exec('SELECT * FROM users WHERE id = ?', att.uid).toArray()[0];
     if (!user) { ws.close(4001, 'unauthorized'); return; }
+    // المعرّفات لازم تكون نصوص قصيرة
+    for (const k of ['serverId', 'channelId', 'to']) if (k in m) m[k] = asId(m[k]);
+    m.req = clean(m.req, 20);
+    try {
+      await this.handleMessage(ws, att, user, m);
+    } catch (e) {
+      console.error('ws message', m.t, e);
+      this.send(ws, { t: 'error', code: 'server_error', req: m.req });
+    }
+  }
+
+  async handleMessage(ws, att, user, m) {
     const reply = (msg) => this.send(ws, msg);
     const error = (code) => reply({ t: 'error', code, req: m.req });
 
@@ -478,9 +526,16 @@ export class Hub extends DurableObject {
         return;
       }
       case 'server.join': {
+        // ما نسمح بتخمين أكواد الدعوة: 10 محاولات غلط كل 10 دقايق لكل اتصال
+        if (att.badInvites >= 10 && Date.now() - att.badInviteAt < 600000) return error('too_many_attempts');
         const invite = clean(m.invite, 64).split('/').pop();
         const s = this.sql.exec('SELECT * FROM servers WHERE invite = ?', invite).toArray()[0];
-        if (!s) return error('bad_invite');
+        if (!s) {
+          if (!att.badInviteAt || Date.now() - att.badInviteAt > 600000) att.badInvites = 0;
+          att.badInvites++; att.badInviteAt = Date.now();
+          ws.serializeAttachment(att);
+          return error('bad_invite');
+        }
         const already = this.isMember(s.id, att.uid);
         if (!already) this.sql.exec('INSERT INTO members (server_id, user_id, joined) VALUES (?, ?, ?)', s.id, att.uid, Date.now());
         const server = this.serverPayload(s.id);
@@ -604,7 +659,7 @@ export class Hub extends DurableObject {
       case 'profile.update': {
         const display = clean(m.display, 32);
         if (!display) return error('bad_name');
-        const hue = Number.isFinite(m.hue) ? Math.round(m.hue) % 360 : user.hue;
+        const hue = Number.isFinite(m.hue) ? ((Math.round(m.hue) % 360) + 360) % 360 : user.hue;
         this.sql.exec('UPDATE users SET display = ?, hue = ? WHERE id = ?', display, hue, att.uid);
         const updated = { ...this.publicUser(user), display, hue };
         this.toUser(att.uid, { t: 'user.update', user: updated });
