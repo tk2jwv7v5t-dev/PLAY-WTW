@@ -9,6 +9,7 @@
    كل البيانات في Durable Object واحد (قاعدة SQLite مدمجة).
    ===================================================== */
 import { DurableObject } from 'cloudflare:workers';
+import { validSubscription, newVapidJwk, loadVapid, sendPush } from './push.js';
 
 const SESSION_DAYS = 30;
 const PBKDF2_ITERATIONS = 100000;
@@ -21,6 +22,10 @@ const STUN_ONLY = [
 ];
 const TURN_TTL = 86400; // صلاحية بيانات TURN بالثواني
 const MAX_ICON_BYTES = 300 * 1024; // المتصفح يصغّر الصورة قبل الرفع، فهذا حد احتياطي
+const NOTIFY_LEVELS = ['all', 'mentions', 'none'];
+const MAX_NOTIFS = 100;       // نحتفظ بآخر 100 إشعار لكل شخص
+const MAX_PUSH_DEVICES = 10;  // أجهزة الإشعارات لكل حساب
+const snippet = (t, n = 140) => (t.length > n ? Array.from(t).slice(0, n).join('') + '…' : t);
 
 // نتأكد إن الملف صورة فعلاً من أول بايتات فيه، مو من اسمه
 function imageType(b) {
@@ -126,6 +131,16 @@ export class Hub extends DurableObject {
       CREATE INDEX IF NOT EXISTS messages_channel ON messages (channel_id, ts);
       CREATE TABLE IF NOT EXISTS server_icons (
         server_id TEXT PRIMARY KEY, data BLOB NOT NULL, type TEXT NOT NULL, updated INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS push_subs (
+        endpoint TEXT PRIMARY KEY, user_id TEXT NOT NULL, p256dh TEXT NOT NULL, auth TEXT NOT NULL, created INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS push_subs_user ON push_subs (user_id);
+      CREATE TABLE IF NOT EXISTS notify_prefs (
+        user_id TEXT NOT NULL, server_id TEXT NOT NULL, level TEXT NOT NULL, PRIMARY KEY (user_id, server_id));
+      CREATE TABLE IF NOT EXISTS notifs (
+        id TEXT PRIMARY KEY, user_id TEXT NOT NULL, kind TEXT NOT NULL, server_id TEXT, channel_id TEXT,
+        actor_id TEXT, text TEXT NOT NULL, ts INTEGER NOT NULL, read INTEGER NOT NULL DEFAULT 0);
+      CREATE INDEX IF NOT EXISTS notifs_user ON notifs (user_id, ts);
     `);
   }
 
@@ -134,7 +149,12 @@ export class Hub extends DurableObject {
     const url = new URL(req.url);
     const route = `${req.method} ${url.pathname}`;
     try {
+      this.site ??= url.origin;
       if (route === 'GET /api/ws') return this.openSocket(req, url);
+      if (route === 'GET /api/push/key') {
+        if (!(await this.authed(req))) return fail('unauthorized', 401);
+        return json({ key: (await this.vapid()).publicB64 });
+      }
       if (route === 'GET /api/ice') {
         if (!(await this.authed(req))) return fail('unauthorized', 401);
         return json({ iceServers: await this.iceServers() });
@@ -156,6 +176,9 @@ export class Hub extends DurableObject {
         if (route === 'POST /api/password') return this.changePassword(req);
         if (route === 'POST /api/account/delete') return this.deleteAccount(req);
         if (icon) return this.setIcon(req, icon[1]);
+        if (route === 'POST /api/push/subscribe') return this.pushSubscribe(req);
+        if (route === 'POST /api/push/unsubscribe') return this.pushUnsubscribe(req);
+        if (route === 'POST /api/push/test') return this.pushTest(req);
       }
       return fail('not_found', 404);
     } catch (e) {
@@ -273,6 +296,9 @@ export class Hub extends DurableObject {
     }
     this.sql.exec('DELETE FROM messages WHERE user_id = ?', user.id);
     this.sql.exec('DELETE FROM sessions WHERE user_id = ?', user.id);
+    this.sql.exec('DELETE FROM push_subs WHERE user_id = ?', user.id);
+    this.sql.exec('DELETE FROM notify_prefs WHERE user_id = ?', user.id);
+    this.sql.exec('DELETE FROM notifs WHERE user_id = ? OR actor_id = ?', user.id, user.id);
     this.sql.exec('DELETE FROM users WHERE id = ?', user.id);
     for (const s of this.sockets()) if (s.att.uid === user.id) { try { s.ws.close(4001, 'deleted'); } catch { /* تسكر */ } }
     return json({ ok: true }, 200, { 'set-cookie': sessionCookie(req, '', 0) });
@@ -333,6 +359,147 @@ export class Hub extends DurableObject {
     }
   }
 
+  /* ---------- الإشعارات ---------- */
+  // المنشن: @username لأعضاء القروب بس (ما تنشن نفسك)
+  findMentions(serverId, text, authorId) {
+    const names = [...new Set([...text.matchAll(/(?:^|\s)@([a-z0-9_.]{3,20})/g)].map((x) => x[1]))].slice(0, 20);
+    if (!names.length) return [];
+    return this.sql.exec(
+      `SELECT u.id FROM users u JOIN members m ON m.user_id = u.id WHERE m.server_id = ? AND u.username IN (${names.map(() => '?').join(',')})`,
+      serverId, ...names).toArray().map((r) => r.id).filter((uid) => uid !== authorId);
+  }
+
+  level(uid, serverId) {
+    return this.sql.exec('SELECT level FROM notify_prefs WHERE user_id = ? AND server_id = ?', uid, serverId).toArray()[0]?.level || 'all';
+  }
+  // المستخدم فاتح الموقع وقدامه الحين (على أي جهاز)
+  isLooking(uid) {
+    return this.sockets().some((s) => s.att.uid === uid && s.att.visible !== false);
+  }
+
+  notifList(uid) {
+    return this.sql.exec(
+      `SELECT n.id, n.kind, n.server_id, n.channel_id, n.text, n.ts, n.read, u.id AS aid, u.username, u.display, u.hue
+       FROM notifs n LEFT JOIN users u ON u.id = n.actor_id WHERE n.user_id = ? ORDER BY n.ts DESC LIMIT 50`, uid,
+    ).toArray().map((r) => this.notifPayload(r));
+  }
+  notifPayload(r) {
+    return {
+      id: r.id, kind: r.kind, serverId: r.server_id, channelId: r.channel_id, text: r.text, ts: r.ts, read: !!r.read,
+      actor: r.aid ? { id: r.aid, username: r.username, display: r.display, hue: r.hue } : null,
+    };
+  }
+
+  // إشعار داخل الموقع (الجرس)، ولو يبي: إشعار للجهاز بعد
+  // minLevel: أقل مستوى لازم يكون مختاره للقروب عشان يوصله إشعار الجهاز
+  notify(uid, n, push, minLevel) {
+    const row = { id: newId(), user_id: uid, ts: Date.now(), read: 0, channel_id: null, ...n };
+    this.sql.exec('INSERT INTO notifs (id, user_id, kind, server_id, channel_id, actor_id, text, ts, read) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)',
+      row.id, uid, row.kind, row.server_id, row.channel_id, row.actor_id, row.text, row.ts);
+    this.sql.exec('DELETE FROM notifs WHERE user_id = ? AND id NOT IN (SELECT id FROM notifs WHERE user_id = ? ORDER BY ts DESC LIMIT ?)', uid, uid, MAX_NOTIFS);
+    const actor = this.sql.exec('SELECT id, username, display, hue FROM users WHERE id = ?', row.actor_id).toArray()[0];
+    this.toUser(uid, { t: 'notif', notif: this.notifPayload({ ...row, aid: actor?.id, username: actor?.username, display: actor?.display, hue: actor?.hue }) });
+    const lvl = this.level(uid, n.server_id);
+    const allowed = lvl === 'all' || (lvl === 'mentions' && minLevel === 'mentions');
+    if (push && allowed && !this.isLooking(uid)) this.pushTo(uid, push);
+  }
+
+  notifyMessage(ch, author, msg) {
+    const server = this.sql.exec('SELECT name FROM servers WHERE id = ?', ch.server_id).one();
+    for (const uid of msg.mentions) {
+      this.notify(uid, { kind: 'mention', server_id: ch.server_id, channel_id: ch.id, actor_id: author.id, text: snippet(msg.text) },
+        { title: `${author.display} منشنك في #${ch.name}`, body: snippet(msg.text), tag: `ch:${ch.id}`, url: `/?channel=${ch.id}`, urgent: true },
+        'mentions');
+    }
+    // باقي الأعضاء: إشعار للجهاز بس (بدون الجرس)، مرة كل 15 ثانية لكل روم عشان ما يصير إزعاج
+    this.lastPush ??= new Map();
+    const now = Date.now();
+    for (const uid of this.memberIds(ch.server_id)) {
+      if (uid === author.id || msg.mentions.includes(uid)) continue;
+      if (this.level(uid, ch.server_id) !== 'all' || this.isLooking(uid)) continue;
+      const key = `${uid}:${ch.id}`;
+      if (now - (this.lastPush.get(key) || 0) < 15000) continue;
+      this.lastPush.set(key, now);
+      this.pushTo(uid, { title: `${author.display} في #${ch.name} · ${server.name}`, body: snippet(msg.text), tag: `ch:${ch.id}`, url: `/?channel=${ch.id}` });
+    }
+  }
+
+  notifyLive(att, user) {
+    const ch = this.channel(att.voice);
+    if (!ch) return;
+    // مرة كل 10 دقايق لنفس الشخص في نفس الروم
+    this.lastLive ??= new Map();
+    const key = `${user.id}:${ch.id}`;
+    if (Date.now() - (this.lastLive.get(key) || 0) < 600000) return;
+    this.lastLive.set(key, Date.now());
+    const inRoom = new Set(this.sockets().filter((s) => s.att.voice === ch.id).map((s) => s.att.uid));
+    for (const uid of this.memberIds(ch.server_id)) {
+      if (uid === user.id || inRoom.has(uid)) continue;
+      this.notify(uid, { kind: 'live', server_id: ch.server_id, channel_id: ch.id, actor_id: user.id, text: ch.name },
+        { title: `${user.display} يبث شاشته الحين`, body: `في ${ch.name}، تعال تفرّج`, tag: `live:${ch.id}`, url: `/?channel=${ch.id}` }, 'all');
+    }
+  }
+
+  /* ---------- إشعارات الجهاز (Web Push) ---------- */
+  // مفتاح التوقيع ينسوى أول مرة وينحفظ في قاعدة البيانات بس
+  async vapid() {
+    if (this.vapidKeys) return this.vapidKeys;
+    let row = this.sql.exec("SELECT v FROM kv WHERE k = 'vapid'").toArray()[0];
+    if (!row) {
+      const jwk = await newVapidJwk();
+      this.sql.exec("INSERT OR IGNORE INTO kv (k, v) VALUES ('vapid', ?)", JSON.stringify(jwk));
+      row = this.sql.exec("SELECT v FROM kv WHERE k = 'vapid'").one();
+    }
+    this.vapidKeys = await loadVapid(JSON.parse(row.v));
+    return this.vapidKeys;
+  }
+
+  async pushSubscribe(req) {
+    const user = await this.authed(req);
+    if (!user) return fail('unauthorized', 401);
+    const sub = validSubscription(await this.body(req));
+    if (!sub) return fail('bad_subscription');
+    this.sql.exec('INSERT OR REPLACE INTO push_subs (endpoint, user_id, p256dh, auth, created) VALUES (?, ?, ?, ?, ?)',
+      sub.endpoint, user.id, sub.p256dh, sub.auth, Date.now());
+    this.sql.exec('DELETE FROM push_subs WHERE user_id = ? AND endpoint NOT IN (SELECT endpoint FROM push_subs WHERE user_id = ? ORDER BY created DESC LIMIT ?)',
+      user.id, user.id, MAX_PUSH_DEVICES);
+    return json({ ok: true });
+  }
+
+  async pushUnsubscribe(req) {
+    const user = await this.authed(req);
+    if (!user) return fail('unauthorized', 401);
+    const b = await this.body(req);
+    this.sql.exec('DELETE FROM push_subs WHERE user_id = ? AND endpoint = ?', user.id, String(b.endpoint || ''));
+    return json({ ok: true });
+  }
+
+  async pushTest(req) {
+    const user = await this.authed(req);
+    if (!user) return fail('unauthorized', 401);
+    const b = await this.body(req);
+    const sub = this.sql.exec('SELECT * FROM push_subs WHERE user_id = ? AND endpoint = ?', user.id, String(b.endpoint || '')).toArray()[0];
+    if (!sub) return fail('not_found', 404);
+    const status = await this.sendOne(sub, { title: 'PLAY WTW', body: 'الإشعارات شغالة على هذا الجهاز ✅', tag: 'test', url: '/' });
+    return status >= 200 && status < 300 ? json({ ok: true }) : fail('push_failed', 502);
+  }
+
+  pushTo(uid, data) {
+    const subs = this.sql.exec('SELECT * FROM push_subs WHERE user_id = ?', uid).toArray();
+    // ما ننتظر الإرسال عشان الشات ما يتأخر
+    for (const sub of subs) {
+      const p = this.sendOne(sub, data).catch((e) => console.error('push', e));
+      if (this.ctx.waitUntil) this.ctx.waitUntil(p);
+    }
+  }
+
+  async sendOne(sub, data) {
+    const status = await sendPush(sub, data, await this.vapid(), this.site || 'mailto:support@play-wtw.invalid');
+    // الجهاز ألغى الاشتراك أو انتهى: نشيله
+    if (status === 404 || status === 410) this.sql.exec('DELETE FROM push_subs WHERE endpoint = ?', sub.endpoint);
+    return status;
+  }
+
   /* ---------- صورة القروب ---------- */
   iconUrl(serverId) {
     const row = this.sql.exec('SELECT updated FROM server_icons WHERE server_id = ?', serverId).toArray()[0];
@@ -386,6 +553,8 @@ export class Hub extends DurableObject {
     this.sql.exec('DELETE FROM channels WHERE server_id = ?', sid);
     this.sql.exec('DELETE FROM members WHERE server_id = ?', sid);
     this.sql.exec('DELETE FROM server_icons WHERE server_id = ?', sid);
+    this.sql.exec('DELETE FROM notify_prefs WHERE server_id = ?', sid);
+    this.sql.exec('DELETE FROM notifs WHERE server_id = ?', sid);
     this.sql.exec('DELETE FROM servers WHERE id = ?', sid);
   }
 
@@ -468,7 +637,8 @@ export class Hub extends DurableObject {
     const channelIds = servers.flatMap((s) => s.channels.map((c) => c.id));
     const known = new Set(servers.flatMap((s) => s.members.map((u) => u.id)));
     const online = [...new Set(this.sockets().map((s) => s.att.uid))].filter((id) => known.has(id) || id === user.id);
-    return { t: 'ready', me: this.publicUser(user), sid, servers, online, voice: this.voiceStates(channelIds) };
+    const prefs = Object.fromEntries(this.sql.exec('SELECT server_id, level FROM notify_prefs WHERE user_id = ?', user.id).toArray().map((r) => [r.server_id, r.level]));
+    return { t: 'ready', me: this.publicUser(user), sid, servers, online, voice: this.voiceStates(channelIds), prefs, notifs: this.notifList(user.id) };
   }
 
   channel(channelId) {
@@ -542,7 +712,11 @@ export class Hub extends DurableObject {
         const memberIds = new Set(server.members.map((u) => u.id));
         const online = [...new Set(this.sockets().map((x) => x.att.uid))].filter((id) => memberIds.has(id));
         this.toUser(att.uid, { t: 'server.add', server, online, voice: this.voiceStates(server.channels.map((c) => c.id)), req: m.req });
-        if (!already) this.toServer(s.id, { t: 'member.add', serverId: s.id, user: this.publicUser(user) });
+        if (!already) {
+          this.toServer(s.id, { t: 'member.add', serverId: s.id, user: this.publicUser(user) });
+          this.notify(s.owner_id, { kind: 'join', server_id: s.id, actor_id: att.uid, text: s.name },
+            { title: `${user.display} دخل قروبك`, body: s.name, tag: `join:${s.id}`, url: `/?server=${s.id}` }, 'all');
+        }
         return;
       }
       case 'server.leave': {
@@ -550,6 +724,8 @@ export class Hub extends DurableObject {
         if (this.isOwner(m.serverId, att.uid)) return error('owner_cannot_leave');
         this.kickFromVoice(m.serverId, att.uid);
         this.sql.exec('DELETE FROM members WHERE server_id = ? AND user_id = ?', m.serverId, att.uid);
+        this.sql.exec('DELETE FROM notify_prefs WHERE server_id = ? AND user_id = ?', m.serverId, att.uid);
+        this.sql.exec('DELETE FROM notifs WHERE server_id = ? AND user_id = ?', m.serverId, att.uid);
         this.toUser(att.uid, { t: 'server.remove', serverId: m.serverId });
         this.toServer(m.serverId, { t: 'member.remove', serverId: m.serverId, uid: att.uid });
         return;
@@ -587,6 +763,7 @@ export class Hub extends DurableObject {
         if (!ch || !this.isOwner(ch.server_id, att.uid)) return error('forbidden');
         for (const s of this.sockets()) if (s.att.voice === ch.id) this.setVoice(s.ws, s.att, null);
         this.sql.exec('DELETE FROM messages WHERE channel_id = ?', ch.id);
+        this.sql.exec('DELETE FROM notifs WHERE channel_id = ?', ch.id);
         this.sql.exec('DELETE FROM channels WHERE id = ?', ch.id);
         this.toServer(ch.server_id, { t: 'channel.remove', serverId: ch.server_id, channelId: ch.id });
         return;
@@ -604,9 +781,10 @@ export class Hub extends DurableObject {
         if (att.burst.length >= 8) return error('slow_down');
         att.burst.push(now);
         ws.serializeAttachment(att);
-        const msg = { id: newId(), channel: ch.id, uid: att.uid, text, ts: now };
+        const msg = { id: newId(), channel: ch.id, uid: att.uid, text, ts: now, mentions: this.findMentions(ch.server_id, text, att.uid) };
         this.sql.exec('INSERT INTO messages (id, channel_id, user_id, text, ts) VALUES (?, ?, ?, ?, ?)', msg.id, ch.id, att.uid, text, now);
         this.toServer(ch.server_id, { t: 'msg', msg, nonce: clean(m.nonce, 40) });
+        this.notifyMessage(ch, user, msg);
         return;
       }
       case 'msg.history': {
@@ -641,6 +819,7 @@ export class Hub extends DurableObject {
         return;
       case 'voice.update':
         if (!att.voice) return;
+        if (m.sharing && !att.sharing) this.notifyLive(att, user);
         att.mic = !!m.mic; att.deaf = !!m.deaf; att.sharing = !!m.sharing;
         att.screen = m.sharing ? clean(m.screen, 80) : null;
         ws.serializeAttachment(att);
@@ -654,6 +833,26 @@ export class Hub extends DurableObject {
         this.send(target.ws, { t: 'rtc', from: att.sid, d: m.d });
         return;
       }
+
+      /* ---- الإشعارات ---- */
+      case 'notify.set': {
+        // مستوى إشعارات القروب: كل الرسايل / المنشن بس / بدون
+        if (!this.isMember(m.serverId, att.uid) || !NOTIFY_LEVELS.includes(m.level)) return error('bad_request');
+        this.sql.exec('INSERT OR REPLACE INTO notify_prefs (user_id, server_id, level) VALUES (?, ?, ?)', att.uid, m.serverId, m.level);
+        this.toUser(att.uid, { t: 'notify.pref', serverId: m.serverId, level: m.level });
+        return;
+      }
+      case 'notif.read': {
+        if (m.all) this.sql.exec('UPDATE notifs SET read = 1 WHERE user_id = ?', att.uid);
+        else this.sql.exec('UPDATE notifs SET read = 1 WHERE user_id = ? AND id = ?', att.uid, clean(m.id, 80));
+        this.toUser(att.uid, { t: 'notif.read', id: m.all ? null : clean(m.id, 80) });
+        return;
+      }
+      case 'focus':
+        // هل الموقع قدام المستخدم الحين؟ لو قدامه ما نرسل له إشعار للجهاز
+        att.visible = !!m.visible;
+        ws.serializeAttachment(att);
+        return;
 
       /* ---- البروفايل ---- */
       case 'profile.update': {

@@ -6,6 +6,7 @@ import { startIntro } from './intro.js';
 import { MicPipeline, LevelWatcher } from './audio.js';
 import { VoiceSession } from './voice.js';
 import { SUPPORT } from './config.js';
+import { pushSupported, isIOS, isStandalone, registerWorker, currentSubscription, enablePush, disablePush, testPush } from './push.js';
 
 const RES = { 720: [1280, 720], 1080: [1920, 1080], 1440: [2560, 1440], 2160: [3840, 2160] };
 const PRESETS = [
@@ -48,6 +49,11 @@ const S = {
   lastTypingSent: 0,
   invite: new URLSearchParams(location.search).get('invite'),
   viewPref: new Map(),  // sid -> الجودة اللي اخترتها لبثه
+  prefs: {},            // serverId -> مستوى الإشعارات (all / mentions / none)
+  notifs: [],           // قائمة الجرس
+  mentions: new Map(),  // channelId -> عدد المنشنات اللي ما شفتها
+  pushOn: false,        // إشعارات الجهاز مفعّلة على هذا الجهاز
+  openTarget: (() => { const q = new URLSearchParams(location.search); return { channel: q.get('channel'), server: q.get('server') }; })(),
   popAnchor: null,
 };
 const mic = new MicPipeline();
@@ -229,7 +235,17 @@ function handle(m) {
       S.voice = new Map(m.voice.map((v) => [v.sid, v]));
       if (!S.servers.has(S.cur.server)) S.cur.server = store.get('lastServer', null);
       if (!S.servers.has(S.cur.server)) S.cur.server = S.servers.keys().next().value || null;
+      S.prefs = m.prefs || {};
+      S.notifs = m.notifs || [];
       selectServer(S.cur.server, true);
+      renderBell();
+      sendFocus();
+      // جاي من إشعار؟ نفتح الروم أو القروب المطلوب
+      if (S.openTarget.channel || S.openTarget.server) {
+        openTarget(S.openTarget);
+        S.openTarget = {};
+        history.replaceState(null, '', location.pathname + (S.invite ? `?invite=${encodeURIComponent(S.invite)}` : ''));
+      }
       if (S.rejoinVoice && findChannel(S.rejoinVoice)) joinVoice(S.rejoinVoice);
       S.rejoinVoice = null;
       if (S.invite) { const code = S.invite; S.invite = null; history.replaceState(null, '', location.pathname); joinServer(code); }
@@ -318,6 +334,19 @@ function handle(m) {
       break;
     }
     case 'rtc': S.vs?.onSignal(m.from, m.d); break;
+    case 'notify.pref': S.prefs[m.serverId] = m.level; renderRail(); break;
+    case 'notif': {
+      S.notifs.unshift(m.notif);
+      S.notifs.length = Math.min(S.notifs.length, 50);
+      renderBell();
+      if (m.notif.kind !== 'mention') beep('msg', settings.sounds && levelOf(m.notif.serverId) === 'all');
+      break;
+    }
+    case 'notif.read': {
+      for (const n of S.notifs) if (!m.id || n.id === m.id) n.read = true;
+      renderBell();
+      break;
+    }
     case 'error': {
       if (!settle(m.req, null, m.code)) toast(ERRORS[m.code] || ERRORS.server_error, 'err');
       break;
@@ -356,6 +385,7 @@ function selectChannel(id) {
   const s = curServer();
   if (s && id) { S.lastChannel[s.id] = id; store.set('lastChannel', S.lastChannel); }
   S.unread.delete(id);
+  S.mentions.delete(id);
   closeNav();
   renderAll();
   if (id && channelKind(id) === 'text') {
@@ -379,9 +409,11 @@ function renderAll() {
 function renderRail() {
   const list = $('#serverList');
   list.innerHTML = [...S.servers.values()].map((s) => {
-    const unread = s.channels.some((c) => S.unread.has(c.id));
+    const unread = s.channels.some((c) => S.unread.has(c.id)) && levelOf(s.id) !== 'none';
     const voice = S.myVoice && s.channels.some((c) => c.id === S.myVoice);
+    const pings = s.channels.reduce((n, c) => n + (S.mentions.get(c.id) || 0), 0);
     return `<button class="rail-btn server${s.id === S.cur.server ? ' active' : ''}${unread ? ' unread' : ''}" type="button" data-server="${s.id}" title="${esc(s.name)}">
+      ${pings ? `<b class="rail-badge" aria-label="${pings} منشن">${pings > 99 ? '99+' : pings}</b>` : ''}
       ${s.iconUrl ? `<img src="${esc(s.iconUrl)}" alt="">` : `<span>${esc([...s.name][0] || '؟')}</span>`}
       ${voice ? `<i class="rail-voice">${I.volume}</i>` : ''}
     </button>`;
@@ -415,6 +447,7 @@ function channelRow(c) {
   const row = `<div class="ch${active ? ' active' : ''}${S.unread.has(c.id) ? ' unread' : ''}${S.myVoice === c.id ? ' joined' : ''}" role="button" tabindex="0" data-ch="${c.id}">
     <span class="ch-icon">${c.kind === 'voice' ? I.volume : I.hash}</span>
     <span class="ch-name">${esc(c.name)}</span>
+    ${S.mentions.get(c.id) ? `<b class="ch-badge" aria-label="منشن">${S.mentions.get(c.id)}</b>` : ''}
     ${isOwner() ? `<button class="mini-btn ch-del" type="button" data-del="${c.id}" title="احذف الروم">${I.trash}</button>` : ''}
   </div>`;
   if (!people.length) return row;
@@ -544,13 +577,33 @@ function onMessage(msg, nonce) {
     renderMessages(false);
     if (atBottom || mine) box.scrollTop = box.scrollHeight;
   }
-  if (!mine) notifyMessage(msg);
-  if (!mine && !visible) {
+  if (mine) return;
+  const mentioned = mentionsMe(msg);
+  const level = levelOf(findChannel(msg.channel)?.server.id);
+  const wanted = level === 'all' || (level === 'mentions' && mentioned);
+  if (wanted) notifyMessage(msg, mentioned);
+  if (!visible) {
     S.unread.add(msg.channel);
+    if (mentioned) S.mentions.set(msg.channel, (S.mentions.get(msg.channel) || 0) + 1);
     renderRail(); renderSidebar();
-    beep('msg', settings.sounds);
+    if (wanted) beep('msg', settings.sounds);
   }
 }
+
+/* ---- المنشن ---- */
+const levelOf = (serverId) => S.prefs[serverId] || 'all';
+const mentionsMe = (msg) => (msg.mentions ? msg.mentions.includes(S.me.id) : new RegExp(`(^|\\s)@${S.me.username.replace(/\./g, '\\.')}(?![a-z0-9_.])`).test(msg.text));
+// @username يصير اسم ملوّن (لأعضاء القروب بس)
+function mentionify(html, server) {
+  if (!server) return html;
+  const byName = new Map([...server.members.values()].map((u) => [u.username, u]));
+  return html.replace(/(^|\s)@([a-z0-9_.]{3,20})(?![a-z0-9_.])/g, (all, pre, name) => {
+    const u = byName.get(name);
+    if (!u) return all;
+    return `${pre}<span class="mention${u.id === S.me.id ? ' me' : ''}" title="@${esc(u.username)}">@${esc(u.display)}</span>`;
+  });
+}
+const renderText = (text, server) => linkify(mentionify(esc(text), server));
 
 function renderMessages(scrollToEnd) {
   const id = S.cur.channel;
@@ -574,11 +627,11 @@ function renderMessages(scrollToEnd) {
       prev = null;
     }
     const cont = prev && prev.uid === m.uid && m.ts - prev.ts < 5 * 60000;
-    html += `<div class="msg${cont ? ' cont' : ''}${m.pending ? ' pending' : ''}">
+    html += `<div class="msg${cont ? ' cont' : ''}${m.pending ? ' pending' : ''}${m.uid !== S.me.id && mentionsMe(m) ? ' mentioned' : ''}">
       ${cont ? `<span class="msg-time-h">${new Date(m.ts).toLocaleTimeString('ar', { hour: 'numeric', minute: '2-digit' })}</span>` : avatar(u)}
       <div class="msg-body">
         ${cont ? '' : `<div class="msg-meta"><b style="--h:${u.hue}">${esc(u.display)}</b><time>${timeLabel(m.ts)}</time></div>`}
-        <div class="msg-text">${linkify(esc(m.text))}</div>
+        <div class="msg-text">${renderText(m.text, findChannel(id)?.server)}</div>
       </div>
     </div>`;
     prev = m;
@@ -1473,6 +1526,7 @@ $('#serverMenu').addEventListener('click', async (e) => {
   if (!s) return;
   switch (b.dataset.act) {
     case 'invite': openInvite(s); break;
+    case 'notify': openLevelPop(s); break;
     case 'newText': openChannelModal('text'); break;
     case 'newVoice': openChannelModal('voice'); break;
     case 'rename':
@@ -1600,6 +1654,7 @@ async function openSettings() {
   $('#optEc').checked = settings.ec;
   $('#optAgc').checked = settings.agc;
   $('#optSounds').checked = settings.sounds;
+  refreshPushUI();
   $('#optNotify').checked = settings.notify && 'Notification' in window && Notification.permission === 'granted';
   $('#optNotifyAll').checked = settings.notifyAll;
   $('#optNotifyAll').disabled = !$('#optNotify').checked;
@@ -1778,6 +1833,7 @@ $('#deleteAccountBtn').addEventListener('click', async () => {
 });
 
 $('#logoutBtn').addEventListener('click', async () => {
+  await disablePush().catch(() => {});
   S.loggingOut = true;
   leaveVoice(true);
   closeModals();
@@ -1877,16 +1933,18 @@ addEventListener('blur', () => setPtt(false));
 const keyLabel = (code) => code.replace(/^Key/, '').replace(/^Digit/, '').replace(/^Numpad/, 'Num ') || code;
 
 /* ---- الإشعارات ---- */
-function notifyMessage(msg) {
+function notifyMessage(msg, mentioned) {
   if (!settings.notify || !('Notification' in window) || Notification.permission !== 'granted') return;
   if (!document.hidden && !(settings.notifyAll && S.cur.channel !== msg.channel)) return;
+  // إشعارات الجهاز شغالة: السيرفر بيرسلها لما الموقع مو قدامك، فما نكررها هنا
+  if (S.pushOn && document.hidden) return;
   const f = findChannel(msg.channel);
   const u = userOf(msg.uid);
   try {
-    const n = new Notification(`${u.display} في #${f?.channel.name || ''}`, {
+    const n = new Notification(`${u.display} ${mentioned ? 'منشنك' : ''} في #${f?.channel.name || ''}`, {
       body: msg.text.length > 140 ? msg.text.slice(0, 140) + '…' : msg.text,
       tag: msg.channel,
-      icon: '/icon.svg',
+      icon: '/icon-192.png',
       lang: 'ar', dir: 'rtl',
     });
     n.onclick = () => { focus(); if (f) { S.cur.server = f.server.id; selectChannel(f.channel.id); } n.close(); };
@@ -1916,7 +1974,8 @@ function openHelp() {
 $('#helpBtn').addEventListener('click', openHelp);
 $('#authHelp').addEventListener('click', openHelp);
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && S.cur.channel) { S.unread.delete(S.cur.channel); renderRail(); renderSidebar(); }
+  sendFocus();
+  if (!document.hidden && S.cur.channel) { S.unread.delete(S.cur.channel); S.mentions.delete(S.cur.channel); renderRail(); renderSidebar(); }
 });
 navigator.mediaDevices?.addEventListener?.('devicechange', () => { if (!$('#settingsModal').classList.contains('hidden')) fillDevices(); });
 addEventListener('beforeunload', () => { if (S.myVoice) send({ t: 'voice.leave' }); });
@@ -1932,3 +1991,210 @@ for (const id of ['#tiles', '#membersList']) {
     if (el && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openUserPop(el, el.dataset.user); }
   });
 }
+
+/* =====================================================
+   الإشعارات
+   ===================================================== */
+// نقول للسيرفر هل الموقع قدامك، عشان ما يرسل لك إشعار للجهاز وانت شايف الرسالة
+function sendFocus() { send({ t: 'focus', visible: !document.hidden }); }
+
+// نفتح روم أو قروب (من إشعار أو رابط)
+function openTarget({ channel, server }) {
+  const f = channel && findChannel(channel);
+  if (f) { S.cur.server = f.server.id; selectChannel(f.channel.id); return; }
+  if (server && S.servers.has(server)) selectServer(server);
+}
+
+/* ---- مستوى إشعارات القروب ---- */
+const LEVELS = [
+  ['all', 'كل الرسايل', 'إشعار لكل رسالة جديدة'],
+  ['mentions', 'المنشن بس', 'بس لما أحد يكتب @اسمك'],
+  ['none', 'بدون', 'ما يجيك ولا إشعار من هالقروب'],
+];
+function openLevelPop(s) {
+  const cur = levelOf(s.id);
+  openPop($('#serverHeadBtn'), `<div class="pop-title">إشعارات ${esc(s.name)}</div>
+    ${LEVELS.map(([v, l, d]) => `<button type="button" class="pop-opt${cur === v ? ' active' : ''}" data-level="${v}"><b>${l}</b><small>${d}</small></button>`).join('')}`, (pop) => {
+    pop.onclick = (e) => {
+      const b = e.target.closest('[data-level]');
+      if (!b) return;
+      send({ t: 'notify.set', serverId: s.id, level: b.dataset.level });
+      S.prefs[s.id] = b.dataset.level;
+      closePop();
+      toast(`إشعارات ${s.name}: ${LEVELS.find((x) => x[0] === b.dataset.level)[1]}`, 'ok');
+      renderRail();
+    };
+  });
+}
+
+/* ---- الجرس ---- */
+function renderBell() {
+  const n = S.notifs.filter((x) => !x.read).length;
+  const b = $('#bellBadge');
+  b.textContent = n > 99 ? '99+' : n;
+  b.classList.toggle('hidden', !n);
+  $('#bellBtn').setAttribute('aria-label', n ? `الإشعارات، ${n} جديدة` : 'الإشعارات');
+  if (S.popAnchor === $('#bellBtn')) fillBell($('#pop'));
+}
+function notifLine(n) {
+  const who = `<b>${esc(n.actor?.display || 'حساب محذوف')}</b>`;
+  const f = n.channelId && findChannel(n.channelId);
+  const server = S.servers.get(n.serverId);
+  if (n.kind === 'mention') return `<span>${who} منشنك في <b>#${esc(f?.channel.name || '')}</b></span><q>${esc(n.text)}</q>`;
+  if (n.kind === 'join') return `<span>${who} دخل قروبك <b>${esc(server?.name || n.text)}</b></span>`;
+  if (n.kind === 'live') return `<span>${who} بث شاشته في <b>${esc(f?.channel.name || n.text)}</b></span>`;
+  return `<span>${esc(n.text)}</span>`;
+}
+function fillBell(pop) {
+  const unread = S.notifs.some((x) => !x.read);
+  pop.innerHTML = `<div class="bell-head"><b>الإشعارات</b>${unread ? '<button type="button" class="btn-link" data-read-all>تحديد الكل كمقروء</button>' : ''}</div>
+    <div class="bell-list">${S.notifs.length ? S.notifs.map((n) => `
+      <button type="button" class="bell-item${n.read ? '' : ' unread'}" data-notif="${esc(n.id)}">
+        ${avatar(n.actor || { display: '؟', hue: 0 }, 'sm')}
+        <span class="bell-text">${notifLine(n)}<time>${timeLabel(n.ts)}</time></span>
+      </button>`).join('') : '<p class="bell-empty">ما عندك إشعارات للحين. المنشن ومين دخل قروبك ومين يبث، كلها تطلع هنا.</p>'}</div>`;
+}
+$('#bellBtn').addEventListener('click', () => {
+  openPop($('#bellBtn'), '', (pop) => {
+    pop.classList.add('bell-pop');
+    fillBell(pop);
+    pop.onclick = (e) => {
+      if (e.target.closest('[data-read-all]')) { send({ t: 'notif.read', all: true }); return; }
+      const item = e.target.closest('[data-notif]');
+      if (!item) return;
+      const n = S.notifs.find((x) => x.id === item.dataset.notif);
+      if (!n) return;
+      if (!n.read) send({ t: 'notif.read', id: n.id });
+      closePop();
+      if (n.channelId && findChannel(n.channelId)) openTarget({ channel: n.channelId });
+      else if (S.servers.has(n.serverId)) openTarget({ server: n.serverId });
+      else toast('هالروم أو القروب انحذف', 'err');
+    };
+  });
+});
+// القائمة المنبثقة نفسها تنستخدم لأشياء ثانية، فنشيل شكل الجرس لما تنقفل
+new MutationObserver(() => {
+  const pop = $('#pop');
+  // نتأكد قبل التعديل، وإلا التعديل نفسه يشغّل المراقب من جديد بلا نهاية
+  if (pop.classList.contains('hidden') && pop.classList.contains('bell-pop')) pop.classList.remove('bell-pop');
+})
+  .observe($('#pop'), { attributes: true, attributeFilter: ['class'] });
+
+/* ---- اقتراح الأسماء لما تكتب @ ---- */
+const mention = { list: [], index: 0, start: -1 };
+function mentionQuery() {
+  const t = $('#msgInput');
+  const before = t.value.slice(0, t.selectionStart);
+  const m = before.match(/(^|\s)@([^\s@]{0,20})$/);
+  return m ? { q: m[2].toLowerCase(), start: before.length - m[2].length - 1 } : null;
+}
+function updateMentionBox() {
+  const box = $('#mentionBox');
+  const s = curServer();
+  const q = s && mentionQuery();
+  if (!q) { box.classList.add('hidden'); mention.list = []; return; }
+  mention.start = q.start;
+  mention.list = [...s.members.values()]
+    .filter((u) => u.id !== S.me.id && (u.username.startsWith(q.q) || u.display.toLowerCase().includes(q.q)))
+    .sort((a, b) => Number(S.online.has(b.id)) - Number(S.online.has(a.id)))
+    .slice(0, 8);
+  mention.index = Math.min(mention.index, Math.max(0, mention.list.length - 1));
+  if (!mention.list.length) { box.classList.add('hidden'); return; }
+  box.innerHTML = `<div class="mb-title">أعضاء القروب</div>` + mention.list.map((u, i) => `
+    <button type="button" class="mb-item${i === mention.index ? ' active' : ''}" role="option" aria-selected="${i === mention.index}" data-i="${i}">
+      ${avatar(u, 'xs')}<b>${esc(u.display)}</b><small dir="ltr">@${esc(u.username)}</small>
+    </button>`).join('');
+  box.classList.remove('hidden');
+}
+function pickMention(i) {
+  const u = mention.list[i];
+  if (!u) return;
+  const t = $('#msgInput');
+  const end = t.selectionStart;
+  t.value = `${t.value.slice(0, mention.start)}@${u.username} ${t.value.slice(end)}`;
+  const caret = mention.start + u.username.length + 2;
+  t.setSelectionRange(caret, caret);
+  t.focus();
+  $('#mentionBox').classList.add('hidden');
+  mention.list = [];
+}
+$('#msgInput').addEventListener('input', updateMentionBox);
+$('#msgInput').addEventListener('click', updateMentionBox);
+$('#msgInput').addEventListener('blur', () => setTimeout(() => $('#mentionBox').classList.add('hidden'), 150));
+// الأسهم و Enter و Tab تختار من القائمة (قبل ما Enter يرسل الرسالة)
+$('#msgInput').addEventListener('keydown', (e) => {
+  if ($('#mentionBox').classList.contains('hidden') || !mention.list.length) return;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    mention.index = (mention.index + (e.key === 'ArrowDown' ? 1 : -1) + mention.list.length) % mention.list.length;
+    updateMentionBox();
+  } else if (e.key === 'Enter' || e.key === 'Tab') {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    pickMention(mention.index);
+  } else if (e.key === 'Escape') {
+    e.stopPropagation();
+    $('#mentionBox').classList.add('hidden');
+  }
+}, true);
+$('#mentionBox').addEventListener('mousedown', (e) => e.preventDefault());
+$('#mentionBox').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-i]');
+  if (b) pickMention(Number(b.dataset.i));
+});
+
+/* ---- إشعارات الجهاز (والموقع مسكّر) ---- */
+async function refreshPushUI() {
+  const box = $('#optPush'), hint = $('#pushHint');
+  const iosNeedsInstall = isIOS() && !isStandalone();
+  $('#iosHelp').classList.toggle('hidden', !iosNeedsInstall);
+  if (iosNeedsInstall || !pushSupported()) {
+    box.checked = false;
+    box.disabled = true;
+    if (!iosNeedsInstall) hint.textContent = ERRORS.push_unsupported;
+    $('#pushTest').hidden = true;
+    return;
+  }
+  box.disabled = false;
+  const sub = await currentSubscription().catch(() => null);
+  S.pushOn = !!sub && Notification.permission === 'granted';
+  box.checked = S.pushOn;
+  $('#pushTest').hidden = !S.pushOn;
+  if (Notification.permission === 'denied') hint.textContent = ERRORS.push_denied;
+}
+$('#optPush').addEventListener('change', async (e) => {
+  const box = e.target;
+  box.disabled = true;
+  try {
+    if (box.checked) {
+      await enablePush();
+      S.pushOn = true;
+      toast('تمام! بتوصلك الإشعارات على هذا الجهاز حتى لو الموقع مسكّر', 'ok');
+    } else {
+      await disablePush();
+      S.pushOn = false;
+      toast('وقّفنا الإشعارات على هذا الجهاز');
+    }
+  } catch (err) {
+    box.checked = false;
+    S.pushOn = false;
+    toast(ERRORS[err.message] || ERRORS.push_unsupported, 'err');
+  } finally {
+    box.disabled = false;
+    $('#pushTest').hidden = !S.pushOn;
+  }
+});
+$('#pushTest').addEventListener('click', (e) => busy(e.currentTarget, 'جاري الإرسال…', async () => {
+  try { await testPush(); toast('أرسلنا إشعار تجريبي، المفروض يطلع لك الحين', 'ok'); }
+  catch (err) { toast(ERRORS[err.message] || ERRORS.push_failed, 'err'); }
+}));
+
+// عامل الخلفية: نسجّله، ونسمع لما ينضغط إشعار والموقع مفتوح
+registerWorker().then(async () => {
+  S.pushOn = !!(await currentSubscription().catch(() => null)) && 'Notification' in window && Notification.permission === 'granted';
+});
+navigator.serviceWorker?.addEventListener('message', (e) => {
+  if (e.data?.type !== 'open') return;
+  const q = new URL(e.data.url, location.origin).searchParams;
+  openTarget({ channel: q.get('channel'), server: q.get('server') });
+});
