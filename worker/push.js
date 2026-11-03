@@ -95,7 +95,7 @@ export async function loadVapid(jwk) {
   return { privateKey, publicB64: b64url(pub) };
 }
 
-// نرسل إشعار مشفّر. يرجع رقم الحالة (0 = فشل الاتصال)
+// نرسل إشعار مشفّر. يرجع { status, detail } (status = 0 لو فشل الاتصال)
 export async function sendPush(sub, data, keys, subject) {
   try {
     const body = await encryptPayload(sub, JSON.stringify(data));
@@ -110,9 +110,9 @@ export async function sendPush(sub, data, keys, subject) {
       },
       body,
     });
-    return r.status;
+    const detail = r.ok ? '' : (await r.text().catch(() => '')).slice(0, 300);
+    return { status: r.status, detail };
   } catch (e) {
-    console.error('push', e);
-    return 0;
+    return { status: 0, detail: String(e?.message || e).slice(0, 300) };
   }
 }

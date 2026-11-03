@@ -372,9 +372,14 @@ export class Hub extends DurableObject {
   level(uid, serverId) {
     return this.sql.exec('SELECT level FROM notify_prefs WHERE user_id = ? AND server_id = ?', uid, serverId).toArray()[0]?.level || 'all';
   }
-  // المستخدم فاتح الموقع وقدامه الحين (على أي جهاز)
+  // الاتصالات اللي المستخدم فاتح فيها الموقع وقدامه الحين.
+  // لو ما لمسه 5 دقايق (أو الجوال جمّد التاب) نعتبره مو قدامه
+  lookingSockets(uid) {
+    const now = Date.now();
+    return this.sockets().filter((s) => s.att.uid === uid && s.att.visible && now - (s.att.activeAt || 0) < 5 * 60 * 1000);
+  }
   isLooking(uid) {
-    return this.sockets().some((s) => s.att.uid === uid && s.att.visible !== false);
+    return this.lookingSockets(uid).length > 0;
   }
 
   notifList(uid) {
@@ -401,7 +406,7 @@ export class Hub extends DurableObject {
     this.toUser(uid, { t: 'notif', notif: this.notifPayload({ ...row, aid: actor?.id, username: actor?.username, display: actor?.display, hue: actor?.hue }) });
     const lvl = this.level(uid, n.server_id);
     const allowed = lvl === 'all' || (lvl === 'mentions' && minLevel === 'mentions');
-    if (push && allowed && !this.isLooking(uid)) this.pushTo(uid, push);
+    if (push && allowed) this.pushTo(uid, push);
   }
 
   notifyMessage(ch, author, msg) {
@@ -480,12 +485,15 @@ export class Hub extends DurableObject {
     const b = await this.body(req);
     const sub = this.sql.exec('SELECT * FROM push_subs WHERE user_id = ? AND endpoint = ?', user.id, String(b.endpoint || '')).toArray()[0];
     if (!sub) return fail('not_found', 404);
-    const status = await this.sendOne(sub, { title: 'PLAY WTW', body: 'الإشعارات شغالة على هذا الجهاز ✅', tag: 'test', url: '/' });
-    return status >= 200 && status < 300 ? json({ ok: true }) : fail('push_failed', 502);
+    const r = await this.sendOne(sub, { title: 'PLAY WTW', body: 'الإشعارات شغالة على هذا الجهاز ✅', tag: 'test', url: '/' });
+    if (r.status >= 200 && r.status < 300) return json({ ok: true, service: new URL(sub.endpoint).host });
+    return json({ error: 'push_failed', status: r.status, service: new URL(sub.endpoint).host, detail: r.detail }, 502);
   }
 
   pushTo(uid, data) {
-    const subs = this.sql.exec('SELECT * FROM push_subs WHERE user_id = ?', uid).toArray();
+    // ما نرسل للجهاز اللي المستخدم يشوف الموقع فيه الحين (يشوف الرسالة أصلاً)
+    const looking = new Set(this.lookingSockets(uid).map((s) => s.att.endpoint).filter(Boolean));
+    const subs = this.sql.exec('SELECT * FROM push_subs WHERE user_id = ?', uid).toArray().filter((s) => !looking.has(s.endpoint));
     // ما ننتظر الإرسال عشان الشات ما يتأخر
     for (const sub of subs) {
       const p = this.sendOne(sub, data).catch((e) => console.error('push', e));
@@ -494,10 +502,14 @@ export class Hub extends DurableObject {
   }
 
   async sendOne(sub, data) {
-    const status = await sendPush(sub, data, await this.vapid(), this.site || 'mailto:support@play-wtw.invalid');
+    const r = await sendPush(sub, data, await this.vapid(), this.site || 'mailto:support@play-wtw.invalid');
+    if (r.status < 200 || r.status >= 300) {
+      // نسجّل السبب في سجلات Cloudflare (بدون عنوان الجهاز الكامل)
+      console.error('push failed', r.status, new URL(sub.endpoint).host, r.detail);
+    }
     // الجهاز ألغى الاشتراك أو انتهى: نشيله
-    if (status === 404 || status === 410) this.sql.exec('DELETE FROM push_subs WHERE endpoint = ?', sub.endpoint);
-    return status;
+    if (r.status === 404 || r.status === 410) this.sql.exec('DELETE FROM push_subs WHERE endpoint = ?', sub.endpoint);
+    return r;
   }
 
   /* ---------- صورة القروب ---------- */
@@ -849,8 +861,10 @@ export class Hub extends DurableObject {
         return;
       }
       case 'focus':
-        // هل الموقع قدام المستخدم الحين؟ لو قدامه ما نرسل له إشعار للجهاز
+        // هل الموقع قدام المستخدم الحين؟ ومن أي جهاز (عشان ما نرسل إشعار لنفس الجهاز اللي يشوف فيه)
         att.visible = !!m.visible;
+        att.activeAt = Date.now();
+        att.endpoint = typeof m.endpoint === 'string' ? m.endpoint.slice(0, 1000) : null;
         ws.serializeAttachment(att);
         return;
 

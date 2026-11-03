@@ -14,8 +14,9 @@ export function registerWorker() {
 
 async function post(url, body) {
   const r = await fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'server_error');
-  return r.json();
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw Object.assign(new Error(d.error || 'server_error'), { status: d.status, service: d.service, detail: d.detail });
+  return d;
 }
 
 const toKey = (b64) => {
@@ -69,5 +70,5 @@ export async function disablePush() {
 export async function testPush() {
   const sub = await currentSubscription();
   if (!sub) throw new Error('push_off');
-  await post('/api/push/test', { endpoint: sub.endpoint });
+  return post('/api/push/test', { endpoint: sub.endpoint });
 }

@@ -1996,7 +1996,12 @@ for (const id of ['#tiles', '#membersList']) {
    الإشعارات
    ===================================================== */
 // نقول للسيرفر هل الموقع قدامك، عشان ما يرسل لك إشعار للجهاز وانت شايف الرسالة
-function sendFocus() { send({ t: 'focus', visible: !document.hidden }); }
+function sendFocus() { send({ t: 'focus', visible: !document.hidden, endpoint: S.pushEndpoint || null }); }
+// لو تستخدم الموقع نبلغ السيرفر كل دقيقة بالكثير، عشان يعرف إنك قدامه
+let lastActive = 0;
+for (const ev of ['pointerdown', 'keydown']) {
+  addEventListener(ev, () => { if (Date.now() - lastActive > 60000 && !document.hidden) { lastActive = Date.now(); sendFocus(); } }, { passive: true });
+}
 
 // نفتح روم أو قروب (من إشعار أو رابط)
 function openTarget({ channel, server }) {
@@ -2169,10 +2174,12 @@ $('#optPush').addEventListener('change', async (e) => {
     if (box.checked) {
       await enablePush();
       S.pushOn = true;
+      await updatePushEndpoint();
       toast('تمام! بتوصلك الإشعارات على هذا الجهاز حتى لو الموقع مسكّر', 'ok');
     } else {
       await disablePush();
       S.pushOn = false;
+      await updatePushEndpoint();
       toast('وقّفنا الإشعارات على هذا الجهاز');
     }
   } catch (err) {
@@ -2185,13 +2192,41 @@ $('#optPush').addEventListener('change', async (e) => {
   }
 });
 $('#pushTest').addEventListener('click', (e) => busy(e.currentTarget, 'جاري الإرسال…', async () => {
-  try { await testPush(); toast('أرسلنا إشعار تجريبي، المفروض يطلع لك الحين', 'ok'); }
-  catch (err) { toast(ERRORS[err.message] || ERRORS.push_failed, 'err'); }
+  const hint = $('#pushHint');
+  try {
+    const r = await testPush();
+    toast('خدمة الإشعارات استلمت الإشعار التجريبي، المفروض يطلع لك خلال ثواني', 'ok');
+    hint.textContent = `آخر تجربة: وصلت لخدمة الإشعارات (${r.service}). إذا ما طلع لك شي، شيّك إن إشعارات المتصفح مسموحة من إعدادات الجهاز، وإن وضع "عدم الإزعاج" مطفي.`;
+  } catch (err) {
+    // الاشتراك انتهى: نجدده على طول ونجرب مرة ثانية
+    if (err.status === 404 || err.status === 410) {
+      try { await disablePush(); await enablePush(); await updatePushEndpoint(); await testPush(); toast('جددنا اشتراك الإشعارات وأرسلنا إشعار تجريبي', 'ok'); return; }
+      catch { /* نكمل ونعرض الخطأ */ }
+    }
+    const why = {
+      0: 'السيرفر ما قدر يوصل لخدمة الإشعارات',
+      400: 'خدمة الإشعارات رفضت الطلب',
+      401: 'خدمة الإشعارات رفضت توقيع الموقع',
+      403: 'خدمة الإشعارات رفضت توقيع الموقع',
+      413: 'الإشعار كبير',
+      429: 'خدمة الإشعارات طلبت نخفف الإرسال، جرّب بعد شوي',
+    }[err.status];
+    const msg = err.status !== undefined ? `${why || 'خدمة الإشعارات ردت بخطأ'} (الرمز ${err.status}${err.service ? ` من ${err.service}` : ''})` : (ERRORS[err.message] || ERRORS.push_failed);
+    toast(msg, 'err');
+    hint.textContent = `آخر تجربة فشلت: ${msg}. صوّر هالرسالة وارسلها للدعم.`;
+  }
 }));
+async function updatePushEndpoint() {
+  S.pushEndpoint = (await currentSubscription().catch(() => null))?.endpoint || null;
+  sendFocus();
+}
 
 // عامل الخلفية: نسجّله، ونسمع لما ينضغط إشعار والموقع مفتوح
 registerWorker().then(async () => {
-  S.pushOn = !!(await currentSubscription().catch(() => null)) && 'Notification' in window && Notification.permission === 'granted';
+  const sub = await currentSubscription().catch(() => null);
+  S.pushOn = !!sub && 'Notification' in window && Notification.permission === 'granted';
+  S.pushEndpoint = sub?.endpoint || null;
+  if (S.wsOpen) sendFocus();
 });
 navigator.serviceWorker?.addEventListener('message', (e) => {
   if (e.data?.type !== 'open') return;
