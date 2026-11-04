@@ -852,6 +852,10 @@ body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after 
 }
 .app.in-dm .members-panel, .app.in-dm #membersToggle { display: none !important; }
 
+.rail-btn.admin { color: var(--cta); }
+.rail-btn.admin:hover { background: var(--cta); color: var(--cta-ink); }
+.rc-head small[dir=ltr] { font-weight: 400; color: var(--muted); }
+
 /* ---------- القائمة المنبثقة ---------- */
 .pop {
   position: fixed; z-index: 90; width: 270px; padding: 14px;

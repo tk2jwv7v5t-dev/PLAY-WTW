@@ -100,6 +100,7 @@
       <div class="rail-sep"></div>
       <div id="serverList" class="server-list"></div>
       <button id="addServerBtn" class="rail-btn add" type="button" title="سوّ قروب أو ادخل واحد" data-icon="plus"></button>
+      <button id="adminBtn" class="rail-btn admin hidden" type="button" title="بلاغات الموقع (للمشرف)"><span data-icon="shield"></span></button>
     </nav>
 
     <!-- قائمة الرومات -->
@@ -580,6 +581,24 @@
       <div class="modal-head"><h3 id="reportsTitle">البلاغات</h3><button type="button" class="icon-btn ghost sm" data-close aria-label="سكّر" data-icon="x"></button></div>
       <p class="muted">رسايل بلّغ عنها أعضاء القروب. انت تقرر: تحذف الرسالة، أو تحذفها وتطرد صاحبها، أو تتجاهل البلاغ.</p>
       <div id="reportsList" class="reports-list"></div>
+    </div>
+  </div>
+
+  <div id="adminModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="adminTitle">
+    <div class="modal-card wide">
+      <div class="modal-head"><h3 id="adminTitle">إدارة الموقع</h3><button type="button" class="icon-btn ghost sm" data-close aria-label="سكّر" data-icon="x"></button></div>
+      <div class="seg-tabs">
+        <button type="button" class="active" data-pane="areports">البلاغات <b id="adminTabCount"></b></button>
+        <button type="button" data-pane="asuspended">الحسابات الموقوفة</button>
+      </div>
+      <div class="pane" data-pane="areports">
+        <p class="muted">كل البلاغات من القروبات والرسائل الخاصة. تشوف الرسالة اللي انبلّغ عنها بس، مو المحادثة كاملة.</p>
+        <div id="adminReports" class="reports-list"></div>
+      </div>
+      <div class="pane hidden" data-pane="asuspended">
+        <p class="muted">الحساب الموقوف ما يقدر يسجّل دخول. لو أوقفت أحد بالغلط، رجّعه من هنا.</p>
+        <div id="adminSuspended" class="reports-list"></div>
+      </div>
     </div>
   </div>
 

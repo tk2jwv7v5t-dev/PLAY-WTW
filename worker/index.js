@@ -160,6 +160,8 @@ export class Hub extends DurableObject {
     `);
     // عمود الصورة للرسايل (للقواعد القديمة)
     try { this.sql.exec('ALTER TABLE messages ADD COLUMN file_id TEXT'); } catch { /* موجود */ }
+    // الحسابات الموقوفة من إدارة الموقع
+    try { this.sql.exec('ALTER TABLE users ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0'); } catch { /* موجود */ }
   }
 
   /* ---------- HTTP ---------- */
@@ -256,6 +258,7 @@ export class Hub extends DurableObject {
       this.noteFailure(req);
       return fail('bad_credentials', 401);
     }
+    if (user.suspended) return fail('suspended', 403);
     return this.startSession(req, user.id);
   }
 
@@ -355,8 +358,67 @@ export class Hub extends DurableObject {
     const token = cookie(req, 'sid');
     if (!token) return null;
     return this.sql.exec(
-      'SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ? AND s.expires > ?',
+      'SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ? AND s.expires > ? AND u.suspended = 0',
       await sha256(token), Date.now()).toArray()[0] || null;
+  }
+
+  /* ---------- إدارة الموقع ----------
+     المشرفين: أسماء مستخدمين في إعداد ADMINS (في wrangler.jsonc)، مفصولة بفاصلة.
+     المشرف توصله كل البلاغات (القروبات والخاص)، ويقدر يحذف الرسالة أو يوقف الحساب. */
+  adminNames() {
+    return String(this.env.ADMINS || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+  }
+  isAdmin(user) {
+    return !!user && this.adminNames().includes(user.username);
+  }
+  adminIds() {
+    const names = this.adminNames();
+    if (!names.length) return [];
+    return this.sql.exec(`SELECT id FROM users WHERE username IN (${names.map(() => '?').join(',')}) AND suspended = 0`, ...names)
+      .toArray().map((r) => r.id);
+  }
+  // الروم أو المحادثة بدون شرط العضوية (للمشرف وللإرسال)
+  roomOf(channelId) {
+    const ch = this.channel(channelId);
+    if (ch) return { kind: ch.kind, id: ch.id, serverId: ch.server_id, ch };
+    const dm = this.sql.exec('SELECT * FROM dms WHERE id = ?', channelId).toArray()[0];
+    return dm ? { kind: 'dm', id: dm.id, dm, other: dm.b } : null;
+  }
+  adminReportList(status = 'open') {
+    return this.sql.exec(
+      `SELECT r.id, r.reason, r.note, r.ts, r.message_id, r.channel_id, r.server_id, c.name AS channel, s.name AS server,
+              m.text, m.file_id, f.w, f.h,
+              a.id AS aid, a.username AS auser, a.display AS adisp, a.hue AS ahue, a.suspended AS asusp,
+              p.id AS pid, p.username AS puser, p.display AS pdisp, p.hue AS phue
+       FROM reports r
+       LEFT JOIN messages m ON m.id = r.message_id LEFT JOIN files f ON f.id = m.file_id
+       LEFT JOIN channels c ON c.id = r.channel_id LEFT JOIN servers s ON s.id = r.server_id
+       LEFT JOIN users a ON a.id = r.author_id LEFT JOIN users p ON p.id = r.reporter_id
+       WHERE r.status = ? ORDER BY r.ts DESC LIMIT 100`, status,
+    ).toArray().map((x) => ({
+      id: x.id, reason: x.reason, note: x.note, ts: x.ts, messageId: x.message_id,
+      where: x.server_id ? { server: x.server, channel: x.channel } : { dm: true },
+      text: x.text, file: x.file_id ? { id: x.file_id, w: x.w, h: x.h } : null,
+      author: x.aid ? { id: x.aid, username: x.auser, display: x.adisp, hue: x.ahue, suspended: !!x.asusp } : null,
+      reporter: x.pid ? { id: x.pid, username: x.puser, display: x.pdisp, hue: x.phue } : null,
+    }));
+  }
+  adminOpenCount() {
+    return this.sql.exec("SELECT COUNT(*) AS n FROM reports WHERE status = 'open'").one().n;
+  }
+  sendAdminCount() {
+    const n = this.adminOpenCount();
+    for (const uid of this.adminIds()) this.toUser(uid, { t: 'admin.count', n });
+  }
+  suspendedList() {
+    return this.sql.exec('SELECT id, username, display, hue FROM users WHERE suspended = 1 ORDER BY username LIMIT 200').toArray();
+  }
+  // نوقف الحساب: ما يقدر يدخل، ونطلّعه من كل الأجهزة
+  suspendUser(uid) {
+    this.sql.exec('UPDATE users SET suspended = 1 WHERE id = ?', uid);
+    this.sql.exec('DELETE FROM sessions WHERE user_id = ?', uid);
+    this.sql.exec('DELETE FROM push_subs WHERE user_id = ?', uid);
+    this.closeSessions((att) => att.uid === uid);
   }
 
   /* ---------- TURN ----------
@@ -499,7 +561,9 @@ export class Hub extends DurableObject {
     const user = await this.authed(req);
     const f = user && this.sql.exec('SELECT * FROM files WHERE id = ?', id).toArray()[0];
     // الصورة تبان بس للي في نفس الروم أو المحادثة
-    if (!f || !this.room(f.scope_id, user.id)) return fail('not_found', 404);
+    const reported = () => this.isAdmin(user) && this.sql.exec(
+      'SELECT 1 FROM reports r JOIN messages m ON m.id = r.message_id WHERE m.file_id = ?', id).toArray().length > 0;
+    if (!f || !(this.room(f.scope_id, user.id) || reported())) return fail('not_found', 404);
     return new Response(f.data, {
       headers: {
         'content-type': f.type,
@@ -808,7 +872,8 @@ export class Hub extends DurableObject {
       .toArray().map((d) => this.dmPayload(d, user.id));
     const reports = Object.fromEntries(servers.filter((s) => s.owner === user.id).map((s) => [s.id, this.openReports(s.id)]));
     return {
-      t: 'ready', me: this.publicUser(user), sid, servers, online, voice: this.voiceStates(channelIds), prefs,
+      t: 'ready', me: { ...this.publicUser(user), admin: this.isAdmin(user) }, sid, servers, online, voice: this.voiceStates(channelIds), prefs,
+      adminCount: this.isAdmin(user) ? this.adminOpenCount() : 0,
       notifs: this.notifList(user.id), dms, blocks: this.blockList(user.id), reports,
     };
   }
@@ -1063,7 +1128,46 @@ export class Hub extends DurableObject {
           }
           this.sendReportCount(r.serverId);
         }
+        for (const admin of this.adminIds()) {
+          if (admin === att.uid) continue;
+          this.notify(admin, { kind: 'report', server_id: r.serverId || null, channel_id: r.id, actor_id: att.uid, text: snippet(row.text || '📷 صورة') },
+            { title: r.kind === 'dm' ? 'بلاغ جديد (رسالة خاصة)' : `بلاغ جديد في ${this.sql.exec('SELECT name FROM servers WHERE id = ?', r.serverId).one().name}`,
+              body: `${user.display}: ${REPORT_REASONS[m.reason]}`, tag: 'admin-report', url: '/?admin=reports', urgent: true }, 'mentions');
+        }
+        this.sendAdminCount();
         reply({ t: 'reported', req: m.req, blocks: this.blockList(att.uid) });
+        return;
+      }
+      case 'admin.reports': {
+        if (!this.isAdmin(user)) return error('forbidden');
+        reply({ t: 'admin.data', list: this.adminReportList(), suspended: this.suspendedList(), req: m.req });
+        return;
+      }
+      case 'admin.resolve': {
+        if (!this.isAdmin(user)) return error('forbidden');
+        const rep = this.sql.exec('SELECT * FROM reports WHERE id = ?', asId(m.id)).toArray()[0];
+        if (!rep) return error('not_found');
+        if (m.action === 'dismiss') {
+          this.sql.exec("UPDATE reports SET status = 'dismissed' WHERE id = ?", rep.id);
+        } else if (m.action === 'delete' || m.action === 'suspend') {
+          const row = this.sql.exec('SELECT * FROM messages WHERE id = ?', rep.message_id).toArray()[0];
+          if (row) this.deleteMessage(row, this.roomOf(row.channel_id));
+          this.sql.exec("UPDATE reports SET status = 'resolved' WHERE message_id = ?", rep.message_id);
+          // ما يوقف نفسه ولا مشرف ثاني
+          if (m.action === 'suspend' && !this.adminIds().includes(rep.author_id)) {
+            this.suspendUser(rep.author_id);
+            this.sql.exec("UPDATE reports SET status = 'resolved' WHERE author_id = ? AND status = 'open'", rep.author_id);
+          }
+        } else return error('bad_request');
+        if (rep.server_id) this.sendReportCount(rep.server_id);
+        this.sendAdminCount();
+        reply({ t: 'admin.data', list: this.adminReportList(), suspended: this.suspendedList(), req: m.req });
+        return;
+      }
+      case 'admin.unsuspend': {
+        if (!this.isAdmin(user)) return error('forbidden');
+        this.sql.exec('UPDATE users SET suspended = 0 WHERE id = ?', asId(m.userId));
+        reply({ t: 'admin.data', list: this.adminReportList(), suspended: this.suspendedList(), req: m.req });
         return;
       }
       case 'reports.list': {

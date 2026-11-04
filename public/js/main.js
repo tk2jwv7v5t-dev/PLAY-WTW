@@ -57,7 +57,7 @@ const S = {
   notifs: [],           // قائمة الجرس
   mentions: new Map(),  // channelId -> عدد المنشنات اللي ما شفتها
   pushOn: false,        // إشعارات الجهاز مفعّلة على هذا الجهاز
-  openTarget: (() => { const q = new URLSearchParams(location.search); return { channel: q.get('channel'), server: q.get('server') }; })(),
+  openTarget: (() => { const q = new URLSearchParams(location.search); return { channel: q.get('channel'), server: q.get('server'), dm: q.get('dm'), admin: q.get('admin') }; })(),
   popAnchor: null,
 };
 const mic = new MicPipeline();
@@ -244,12 +244,14 @@ function handle(m) {
       for (const d of S.dms.values()) S.users.set(d.other.id, d.other);
       S.blocks = new Set(m.blocks || []);
       S.reportCounts = m.reports || {};
+      S.adminCount = m.adminCount || 0;
+      renderAdmin();
       S.notifs = m.notifs || [];
       selectServer(S.cur.server, true);
       renderBell();
       sendFocus();
       // جاي من إشعار؟ نفتح الروم أو القروب المطلوب
-      if (S.openTarget.channel || S.openTarget.server) {
+      if (S.openTarget.channel || S.openTarget.server || S.openTarget.dm || S.openTarget.admin) {
         openTarget(S.openTarget);
         S.openTarget = {};
         history.replaceState(null, '', location.pathname + (S.invite ? `?invite=${encodeURIComponent(S.invite)}` : ''));
@@ -337,7 +339,7 @@ function handle(m) {
       const u = m.user;
       S.users.set(u.id, u);
       for (const s of S.servers.values()) if (s.members.has(u.id)) s.members.set(u.id, u);
-      if (u.id === S.me.id) S.me = u;
+      if (u.id === S.me.id) S.me = { ...S.me, ...u };
       renderAll();
       if (S.cur.channel && isChat(S.cur.channel)) renderMessages(true);
       break;
@@ -361,6 +363,8 @@ function handle(m) {
       break;
     }
     case 'reports.count': S.reportCounts[m.serverId] = m.n; renderReportCount(); break;
+    case 'admin.count': S.adminCount = m.n; renderAdmin(); break;
+    case 'admin.data': settle(m.req, m); break;
     case 'reports': settle(m.req, m.list); if (!$('#reportsModal').classList.contains('hidden')) fillReports(m.serverId, m.list); break;
     case 'notif': {
       S.notifs.unshift(m.notif);
@@ -2090,7 +2094,8 @@ for (const ev of ['pointerdown', 'keydown']) {
 }
 
 // نفتح روم أو قروب (من إشعار أو رابط)
-function openTarget({ channel, server, dm }) {
+function openTarget({ channel, server, dm, admin }) {
+  if (admin && S.me?.admin) { openAdmin(); return; }
   if ((channel || dm) && openChannel(channel || dm)) return;
   if (server && S.servers.has(server)) selectServer(server);
 }
@@ -2133,7 +2138,7 @@ function notifLine(n) {
   if (n.kind === 'mention') return `<span>${who} منشنك في <b>#${esc(f?.channel.name || '')}</b></span><q>${esc(n.text)}</q>`;
   if (n.kind === 'join') return `<span>${who} دخل قروبك <b>${esc(server?.name || n.text)}</b></span>`;
   if (n.kind === 'live') return `<span>${who} بث شاشته في <b>${esc(f?.channel.name || n.text)}</b></span>`;
-  if (n.kind === 'report') return `<span>${who} بلّغ عن رسالة في <b>#${esc(f?.channel.name || '')}</b></span><q>${esc(n.text)}</q>`;
+  if (n.kind === 'report') return `<span>${who} بلّغ عن رسالة ${n.serverId ? `في <b>#${esc(f?.channel.name || '')}</b>` : 'خاصة'}</span><q>${esc(n.text)}</q>`;
   return `<span>${esc(n.text)}</span>`;
 }
 function fillBell(pop) {
@@ -2157,6 +2162,7 @@ $('#bellBtn').addEventListener('click', () => {
       if (!n) return;
       if (!n.read) send({ t: 'notif.read', id: n.id });
       closePop();
+      if (n.kind === 'report' && S.me.admin) { openAdmin(); return; }
       if (n.kind === 'report' && S.servers.has(n.serverId)) { selectServer(n.serverId); openReports(n.serverId); return; }
       if (n.channelId && findChannel(n.channelId)) openTarget({ channel: n.channelId });
       else if (S.servers.has(n.serverId)) openTarget({ server: n.serverId });
@@ -2318,7 +2324,7 @@ registerWorker().then(async () => {
 navigator.serviceWorker?.addEventListener('message', (e) => {
   if (e.data?.type !== 'open') return;
   const q = new URL(e.data.url, location.origin).searchParams;
-  openTarget({ channel: q.get('channel'), server: q.get('server') });
+  openTarget({ channel: q.get('channel'), server: q.get('server'), dm: q.get('dm'), admin: q.get('admin') });
 });
 
 /* =====================================================
@@ -2621,3 +2627,62 @@ $('#dmPeople').addEventListener('click', (e) => {
 });
 $('#channelList').addEventListener('click', (e) => { if (e.target.closest('[data-new-dm]')) openDmModal(); }, true);
 $('#emptyDm').addEventListener('click', openDmModal);
+
+/* =====================================================
+   إدارة الموقع (للمشرف بس)
+   ===================================================== */
+function renderAdmin() {
+  const b = $('#adminBtn');
+  b.classList.toggle('hidden', !S.me?.admin);
+  b.querySelector('.rail-badge')?.remove();
+  if (S.adminCount) b.insertAdjacentHTML('beforeend', `<b class="rail-badge" aria-label="${S.adminCount} بلاغ">${S.adminCount > 99 ? '99+' : S.adminCount}</b>`);
+  $('#adminTabCount').textContent = S.adminCount ? `(${S.adminCount})` : '';
+}
+async function openAdmin() {
+  $('#adminReports').innerHTML = '<div class="loading-msgs"><i></i><i></i><i></i></div>';
+  openModal('#adminModal');
+  try { fillAdmin(await request({ t: 'admin.reports' })); }
+  catch (err) { $('#adminReports').innerHTML = `<p class="hint warn">${esc(ERRORS[err.message] || ERRORS.network)}</p>`; }
+}
+function fillAdmin(d) {
+  $('#adminReports').innerHTML = d.list.length ? d.list.map((r) => `
+    <div class="report-card">
+      <div class="rc-head">${avatar(r.author || { display: '؟' }, 'sm')}<div><b>${esc(r.author?.display || 'حساب محذوف')} <small dir="ltr">@${esc(r.author?.username || '')}</small></b>
+        <small>${r.where.dm ? 'رسالة خاصة' : `${esc(r.where.server || '')} · #${esc(r.where.channel || '')}`} · ${timeLabel(r.ts)}</small></div>
+        <span class="rc-reason">${esc(REASON_LABEL[r.reason] || r.reason)}</span></div>
+      ${r.text ? `<blockquote class="report-quote">${esc(r.text)}</blockquote>` : ''}
+      ${r.file ? photoHtml(r.file) : ''}
+      ${!r.text && !r.file ? '<p class="hint">الرسالة انحذفت.</p>' : ''}
+      <p class="hint">بلّغ عنها ${esc(r.reporter?.display || '؟')}${r.note ? `: «${esc(r.note)}»` : ''}</p>
+      <div class="rc-actions">
+        <button type="button" class="btn btn-soft btn-sm" data-admin="dismiss" data-id="${esc(r.id)}">تجاهل</button>
+        <button type="button" class="btn btn-danger-soft btn-sm" data-admin="delete" data-id="${esc(r.id)}">احذف الرسالة</button>
+        ${r.author && r.author.id !== S.me.id ? `<button type="button" class="btn btn-danger btn-sm" data-admin="suspend" data-id="${esc(r.id)}">احذفها وأوقف الحساب</button>` : ''}
+      </div>
+    </div>`).join('') : '<p class="bell-empty">ما فيه بلاغات مفتوحة 👍</p>';
+  $('#adminSuspended').innerHTML = d.suspended.length ? d.suspended.map((u) => `
+    <div class="report-card"><div class="rc-head">${avatar(u, 'sm')}<div><b>${esc(u.display)}</b><small dir="ltr">@${esc(u.username)}</small></div>
+      <button type="button" class="btn btn-soft btn-sm" data-unsuspend="${esc(u.id)}">رجّع الحساب</button></div></div>`).join('')
+    : '<p class="bell-empty">ما فيه حسابات موقوفة.</p>';
+}
+$('#adminBtn').addEventListener('click', openAdmin);
+$('#adminModal').addEventListener('click', async (e) => {
+  const photo = e.target.closest('[data-photo]');
+  if (photo?.dataset.photo) { openViewer(photo.dataset.photo); return; }
+  const act = e.target.closest('[data-admin]'), un = e.target.closest('[data-unsuspend]');
+  if (!act && !un) return;
+  try {
+    if (un) {
+      fillAdmin(await request({ t: 'admin.unsuspend', userId: un.dataset.unsuspend }));
+      toast('رجع الحساب، يقدر يسجّل دخول', 'ok');
+      return;
+    }
+    if (act.dataset.admin === 'suspend') {
+      const ok = await confirmBox('توقف الحساب؟', 'بتنحذف الرسالة، ويطلع من الموقع وما يقدر يسجّل دخول لين ترجّعه.', 'أوقف الحساب');
+      openModal('#adminModal');
+      if (!ok) return;
+    }
+    fillAdmin(await request({ t: 'admin.resolve', id: act.dataset.id, action: act.dataset.admin }));
+    toast({ dismiss: 'تجاهلنا البلاغ', delete: 'انحذفت الرسالة', suspend: 'انحذفت الرسالة وانوقف الحساب' }[act.dataset.admin], 'ok');
+  } catch (err) { toast(ERRORS[err.message] || ERRORS.network, 'err'); }
+});
