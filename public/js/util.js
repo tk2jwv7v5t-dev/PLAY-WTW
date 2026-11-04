@@ -45,6 +45,8 @@ export const I = {
   maximize: svg('<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>'),
   focus: svg('<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/>'),
   activity: svg('<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>'),
+  search: svg('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>'),
+  user: svg('<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>'),
   crown: svg('<path d="m2 4 3 12h14l3-12-6 7-4-7-4 7-6-7z"/><path d="M5 20h14"/>'),
 };
 
@@ -64,6 +66,21 @@ export function avatar(user, cls = '') {
 
 export const linkify = (html) =>
   html.replace(/\bhttps?:\/\/[^\s<]+/g, (u) => `<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`);
+
+// وقت مختصر مثل قائمة الرسايل: الحين، 5 د، 3 س، أمس، 4 أيام، 3 أسابيع، 4 شهور
+export function timeAgo(ts) {
+  const m = Math.floor((Date.now() - ts) / 60000);
+  if (m < 1) return 'الحين';
+  if (m < 60) return `${m} د`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} س`;
+  const d = Math.floor(h / 24);
+  if (d === 1) return 'أمس';
+  if (d < 7) return d === 2 ? 'يومين' : `${d} أيام`;
+  if (d < 30) { const w = Math.floor(d / 7); return w === 1 ? 'أسبوع' : w === 2 ? 'أسبوعين' : `${w} أسابيع`; }
+  if (d < 365) { const mo = Math.floor(d / 30); return mo === 1 ? 'شهر' : mo === 2 ? 'شهرين' : `${mo} شهور`; }
+  const y = Math.floor(d / 365); return y === 1 ? 'سنة' : `${y} سنين`;
+}
 
 export function timeLabel(ts) {
   const d = new Date(ts), now = new Date();

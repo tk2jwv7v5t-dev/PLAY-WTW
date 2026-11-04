@@ -1,7 +1,7 @@
 /* =====================================================
    PLAY WTW — الواجهة
    ===================================================== */
-import { I, $, $$, esc, clean, fillIcons, autoLabel, busy, avatar, linkify, timeLabel, store, toast, beep, ERRORS } from './util.js';
+import { I, $, $$, esc, clean, fillIcons, autoLabel, busy, avatar, linkify, timeLabel, timeAgo, store, toast, beep, ERRORS } from './util.js';
 import { startIntro } from './intro.js';
 import { MicPipeline, LevelWatcher } from './audio.js';
 import { VoiceSession } from './voice.js';
@@ -22,7 +22,7 @@ const NS_LABEL = { gtcrn: 'ذكاء اصطناعي قوي', rnnoise: 'ذكاء �
 const settings = Object.assign({
   inDevice: '', outDevice: '', ns: 'rnnoise', gateAuto: true, gateDb: -50,
   inVol: 100, outVol: 100, ec: true, agc: true, sounds: true, userVol: {}, userMute: {},
-  notify: false, notifyAll: false, fontScale: 'md', reduceMotion: false, ptt: false, pttKey: 'KeyV',
+  notify: false, notifyAll: false, theme: 'light', fontScale: 'md', reduceMotion: false, ptt: false, pttKey: 'KeyV',
 }, store.get('settings', {}));
 const shareCfg = Object.assign({ res: '1080', fps: 60, mode: 'balanced', brAuto: true, br: 12, audio: true }, store.get('share', {}));
 const saveSettings = () => store.set('settings', settings);
@@ -248,6 +248,9 @@ function handle(m) {
       renderAdmin();
       S.notifs = m.notifs || [];
       selectServer(S.cur.server, true);
+      // الجوال يفتح على قائمة الرسايل، إلا الحساب الجديد يشوف صفحة الترحيب وخطوات البداية
+      if (!S.readyOnce && isMobile() && (S.servers.size || S.dms.size)) mobileTab('home');
+      S.readyOnce = true;
       renderBell();
       sendFocus();
       // جاي من إشعار؟ نفتح الروم أو القروب المطلوب
@@ -333,6 +336,7 @@ function handle(m) {
     case 'presence': {
       m.online ? S.online.add(m.uid) : S.online.delete(m.uid);
       renderMembers();
+      if (!S.cur.server) renderSidebar();
       refreshHome();
       break;
     }
@@ -467,27 +471,22 @@ function renderRail() {
   const dmUnread = [...S.dms.keys()].filter((id) => S.unread.has(id)).length;
   $('#homeBtn').querySelector('.rail-badge')?.remove();
   if (dmUnread) $('#homeBtn').insertAdjacentHTML('beforeend', `<b class="rail-badge" aria-label="${dmUnread} رسايل خاصة جديدة">${dmUnread}</b>`);
+  const pings = dmUnread + [...S.mentions.values()].reduce((a, b) => a + b, 0);
+  $('#tabHomeBadge').textContent = pings > 99 ? '99+' : pings;
+  $('#tabHomeBadge').classList.toggle('hidden', !pings);
 }
 
 function renderSidebar() {
   const s = curServer();
-  $('#serverName').textContent = s ? s.name : 'الرسائل الخاصة';
+  $('#serverName').textContent = s ? s.name : 'الرسائل';
   $('#serverHeadBtn').disabled = !s;
   $('#app').classList.toggle('is-owner', !!isOwner(s));
   renderReportCount();
   const list = $('#channelList');
+  $('#msgsTop').classList.toggle('hidden', !!s);
+  $('#app').classList.toggle('at-home', !s);
   if (!s) {
-    const dms = [...S.dms.values()].sort((a, b) => (b.last || 0) - (a.last || 0));
-    list.innerHTML = `<div class="ch home-link${!S.cur.channel ? ' active' : ''}" role="button" tabindex="0" data-home>
-        <span class="ch-icon">${I.home}</span><span class="ch-name">الرئيسية</span></div>
-    <div class="ch-group">
-      <div class="ch-group-head"><span>الرسائل الخاصة</span><button class="mini-btn" type="button" data-new-dm title="رسالة خاصة جديدة">${I.plus}</button></div>
-      ${dms.length ? dms.map((d) => `
-        <div class="ch dm${d.id === S.cur.channel ? ' active' : ''}${S.unread.has(d.id) ? ' unread' : ''}" role="button" tabindex="0" data-ch="${d.id}">
-          ${avatar(d.other, 'xs')}<span class="ch-name">${esc(d.other.display)}</span>
-          ${S.online.has(d.other.id) ? '<i class="dot on" title="متصل"></i>' : ''}
-        </div>`).join('') : `<div class="side-empty">ما عندك رسايل خاصة للحين.<br><button class="btn btn-soft btn-sm" type="button" data-new-dm>ابدأ محادثة</button></div>`}
-    </div>`;
+    list.innerHTML = homeLink() + activeNow() + dmRows();
     return;
   }
   const group = (kind, title) => {
@@ -498,6 +497,60 @@ function renderSidebar() {
     </div>`;
   };
   list.innerHTML = group('text', 'الرومات الكتابية') + group('voice', 'الرومات الصوتية');
+}
+
+/* ---- قائمة الرسائل (مثل تطبيقات الشات) ---- */
+const homeLink = () => `<div class="ch home-link${!S.cur.channel ? ' active' : ''}" role="button" tabindex="0" data-home>
+  <span class="ch-icon">${I.home}</span><span class="ch-name">الرئيسية</span></div>`;
+
+// كروت أفقية: مين في روم صوتي الحين (من قروباتك)
+function activeNow() {
+  const rooms = new Map();
+  for (const v of S.voice.values()) {
+    if (!rooms.has(v.channel)) rooms.set(v.channel, []);
+    rooms.get(v.channel).push(v);
+  }
+  const cards = [...rooms].map(([cid, people]) => {
+    const f = findChannel(cid);
+    if (!f) return '';
+    const live = people.some((v) => v.sharing);
+    const shown = people.slice(0, 3).map((v) => avatar(userOf(v.uid), 'sm')).join('');
+    const more = people.length > 3 ? `<i class="an-more">+${people.length - 3}</i>` : '';
+    const names = people.map((v) => userOf(v.uid).display).join('، ');
+    return `<button type="button" class="an-card${S.myVoice === cid ? ' joined' : ''}" data-ch="${cid}" title="${esc(names)}">
+      <span class="an-faces">${shown}${more}</span>
+      <b class="an-name">${esc(people.length === 1 ? userOf(people[0].uid).display : people.length === 2 ? `${userOf(people[0].uid).display} و${userOf(people[1].uid).display}` : `${userOf(people[0].uid).display} +${people.length - 1}`)}</b>
+      <small class="an-room">${live ? '<i class="live-dot"></i>' : I.volume}<span>${esc(f.channel.name)}</span></small>
+      <small class="an-server">${esc(f.server?.name || '')}</small>
+    </button>`;
+  }).join('');
+  if (!cards) return '';
+  return `<div class="an-wrap"><div class="ch-group-head"><span>في روم صوتي الحين</span></div><div class="an-row">${cards}</div></div>`;
+}
+
+function dmPreview(d) {
+  const p = d.preview;
+  if (!p) return '<span class="dm-sub muted">ابدأ السوالف</span>';
+  const who = p.uid === S.me.id ? 'انت: ' : '';
+  return `<span class="dm-sub">${esc(who + (p.text || ''))}</span>`;
+}
+
+function dmRows() {
+  const q = $('#dmSearch').value.trim().toLowerCase();
+  const all = [...S.dms.values()].sort((a, b) => (b.last || 0) - (a.last || 0));
+  const dms = q ? all.filter((d) => `${d.other.display} ${d.other.username}`.toLowerCase().includes(q)) : all;
+  const rows = dms.map((d) => {
+    const unread = S.unread.has(d.id);
+    const ts = d.preview?.ts || d.last;
+    return `<div class="dm-row${d.id === S.cur.channel ? ' active' : ''}${unread ? ' unread' : ''}" role="button" tabindex="0" data-ch="${d.id}">
+      <span class="dm-ava">${avatar(d.other, 'md')}<i class="st${S.online.has(d.other.id) ? ' on' : ''}" title="${S.online.has(d.other.id) ? 'متصل' : 'غير متصل'}"></i></span>
+      <span class="dm-main"><b class="dm-name">${esc(d.other.display)}</b>${dmPreview(d)}</span>
+      <span class="dm-side">${ts ? `<time>${timeAgo(ts)}</time>` : ''}${unread ? '<i class="dm-dot" aria-label="رسايل جديدة"></i>' : ''}</span>
+    </div>`;
+  }).join('');
+  const empty = q ? `<div class="side-empty">ما لقينا أحد باسم "${esc(q)}".</div>`
+    : `<div class="side-empty">ما عندك رسايل خاصة للحين.<br><button class="btn btn-soft btn-sm" type="button" data-new-dm>ابدأ محادثة</button></div>`;
+  return `<div class="ch-group dm-list"><div class="ch-group-head"><span>الرسائل الخاصة</span></div>${rows || empty}</div>`;
 }
 
 function channelRow(c) {
@@ -575,6 +628,13 @@ function renderUserPanel() {
   $('#meAvatar').dataset.speak = 'me';
   $('#meDisplay').textContent = S.me.display;
   $('#meUser').textContent = '@' + S.me.username;
+  $('#tabYouAvatar').innerHTML = avatar(S.me, 'xs');
+  $('#youCard').innerHTML = `<div class="you-hero">${avatar(S.me, 'lg')}<i class="st on"></i></div>
+    <h2>${esc(S.me.display)}</h2><p class="muted" dir="ltr">@${esc(S.me.username)}</p>
+    <div class="you-actions">
+      <button type="button" class="btn btn-soft btn-sm" data-you="mic">${S.micOn && S.hasMic && !S.deaf ? I.mic : I.micOff}<span>${S.micOn && S.hasMic && !S.deaf ? 'المايك شغال' : 'المايك مقفل'}</span></button>
+      <button type="button" class="btn btn-soft btn-sm" data-you="deaf">${S.deaf ? I.headphonesOff : I.headphones}<span>${S.deaf ? 'الصوت مكتوم' : 'الصوت شغال'}</span></button>
+    </div>`;
   const micOn = S.micOn && S.hasMic && !S.deaf;
   for (const b of [$('#micBtn'), $('#dMic')]) {
     b.innerHTML = micOn ? I.mic : I.micOff;
@@ -633,7 +693,7 @@ function onHistory(m) {
 
 function onMessage(msg, nonce) {
   const dm = S.dms.get(msg.channel);
-  if (dm) { dm.last = msg.ts; renderSidebar(); }
+  if (dm) { dm.last = msg.ts; dm.preview = { uid: msg.uid, text: msg.text || (msg.file ? '📷 صورة' : ''), ts: msg.ts }; renderSidebar(); }
   const st = chanStore(msg.channel);
   if (nonce) st.list = st.list.filter((x) => x.nonce !== nonce);
   if (st.list.some((x) => x.id === msg.id)) return;
@@ -1757,6 +1817,7 @@ async function openSettings() {
   $('#optNotify').disabled = !('Notification' in window);
   if (!('Notification' in window)) $('#notifyHint').textContent = 'متصفحك ما يدعم الإشعارات. في الآيفون: أضف الموقع للشاشة الرئيسية أول.';
   $$('#settingsModal input[name=fontScale]').forEach((r) => { r.checked = r.value === settings.fontScale; });
+  $$('#settingsModal input[name=theme]').forEach((r) => { r.checked = r.value === settings.theme; });
   $('#optReduceMotion').checked = settings.reduceMotion;
   $('#optPtt').checked = settings.ptt;
   $('#pttKeyBtn').textContent = keyLabel(settings.pttKey);
@@ -1830,6 +1891,7 @@ $('#settingsModal').addEventListener('change', async (e) => {
     $('#optNotifyAll').disabled = !t.checked;
     saveSettings();
   } else if (t.id === 'optNotifyAll') { settings.notifyAll = t.checked; saveSettings(); }
+  else if (t.name === 'theme') { settings.theme = t.value; saveSettings(); applyLook(); }
   else if (t.name === 'fontScale') { settings.fontScale = t.value; saveSettings(); applyLook(); }
   else if (t.id === 'optReduceMotion') { settings.reduceMotion = t.checked; saveSettings(); applyLook(); }
   else if (t.id === 'optPtt') {
@@ -1950,9 +2012,9 @@ $('#logoutBtn').addEventListener('click', async () => {
    ===================================================== */
 $('#serverList').addEventListener('click', (e) => {
   const b = e.target.closest('[data-server]');
-  if (b) selectServer(b.dataset.server);
+  if (b) { selectServer(b.dataset.server); if (isMobile()) mobileTab('home'); }
 });
-$('#homeBtn').addEventListener('click', () => selectServer(null));
+$('#homeBtn').addEventListener('click', () => { selectServer(null); if (isMobile()) mobileTab('home'); });
 $('#channelList').addEventListener('click', (e) => { if (e.target.closest('[data-home]')) selectServer(null); });
 $('#addServerBtn').addEventListener('click', () => openServerModal());
 $('#emptyCreate').addEventListener('click', () => openServerModal('create'));
@@ -1973,9 +2035,13 @@ $('#channelList').addEventListener('click', async (e) => {
   const row = e.target.closest('[data-ch]');
   if (!row) return;
   const id = row.dataset.ch;
-  selectChannel(id);
-  if (channelKind(id) === 'voice') joinVoice(id);
+  openChannel(id);
+  // كروت "في روم صوتي الحين" تفتح الروم بس، والدخول من زر الروم نفسه
+  if (channelKind(id) === 'voice' && !row.classList.contains('an-card')) joinVoice(id);
 });
+$('#dmSearch').addEventListener('input', () => renderSidebar());
+$('#msgsTop').addEventListener('click', (e) => { if (e.target.closest('[data-new-dm]')) openDmModal(); });
+$('#fabDm').addEventListener('click', () => openDmModal());
 $('#channelList').addEventListener('keydown', (e) => {
   if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-ch]')) { e.preventDefault(); e.target.click(); }
 });
@@ -1998,9 +2064,38 @@ $('#membersToggle').addEventListener('click', () => {
   if (matchMedia('(max-width: 900px)').matches) { app.classList.toggle('members-open'); app.classList.remove('nav-open'); }
   else app.classList.toggle('members-hidden');
 });
-$('#navToggle').addEventListener('click', () => { $('#app').classList.toggle('nav-open'); $('#app').classList.remove('members-open'); });
+$('#navToggle').addEventListener('click', () => mobileTab('home'));
 $('#scrim').addEventListener('click', () => $('#app').classList.remove('nav-open', 'members-open'));
-function closeNav() { $('#app').classList.remove('nav-open', 'members-open'); }
+function closeNav() { $('#app').classList.remove('nav-open', 'members-open', 'm-notifs', 'm-you'); }
+
+/* ---- الجوال: الشريط السفلي (الرئيسية / الإشعارات / أنت) ---- */
+const isMobile = () => matchMedia('(max-width: 900px)').matches;
+function mobileTab(tab) {
+  const app = $('#app');
+  app.classList.remove('members-open');
+  app.classList.toggle('nav-open', tab === 'home');
+  app.classList.toggle('m-notifs', tab === 'notifs');
+  app.classList.toggle('m-you', tab === 'you');
+  for (const b of $$('#tabbar [data-tab]')) b.classList.toggle('active', b.dataset.tab === tab);
+  if (tab === 'notifs') fillNotifScreen();
+  if (tab === 'you') renderUserPanel();
+}
+$('#tabbar').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-tab]');
+  if (b) mobileTab(b.dataset.tab);
+});
+$('#youScreen').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-you]');
+  if (!b) return;
+  const act = b.dataset.you;
+  if (act === 'mic') { toggleMic(); renderUserPanel(); }
+  else if (act === 'deaf') { setDeaf(!S.deaf); renderUserPanel(); }
+  else if (act === 'help') openHelp();
+  else if (act === 'logout') $('#logoutBtn').click();
+  else openSettings().then(() => $(`#settingsModal .seg-tabs [data-pane=${act}]`).click());
+});
+// لو كبّرت الشاشة من الجوال للكمبيوتر نرجع الشكل العادي
+matchMedia('(max-width: 900px)').addEventListener('change', (e) => { if (!e.matches) closeNav(); });
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
@@ -2057,6 +2152,9 @@ function notifyMessage(msg, mentioned) {
 
 /* ---- المظهر ---- */
 function applyLook() {
+  const theme = settings.theme === 'dark' ? 'dark' : 'light';
+  document.documentElement.dataset.theme = theme;
+  document.querySelector('meta[name=theme-color]')?.setAttribute('content', theme === 'light' ? '#e8eaee' : '#0b0918');
   document.documentElement.style.zoom = { sm: 0.9, md: 1, lg: 1.12 }[settings.fontScale] || 1;
   document.body.classList.toggle('reduce-motion', !!settings.reduceMotion);
 }
@@ -2154,7 +2252,23 @@ function renderBell() {
   b.classList.toggle('hidden', !n);
   $('#bellBtn').setAttribute('aria-label', n ? `الإشعارات، ${n} جديدة` : 'الإشعارات');
   if (S.popAnchor === $('#bellBtn')) fillBell($('#pop'));
+  $('#tabBellBadge').textContent = n > 99 ? '99+' : n;
+  $('#tabBellBadge').classList.toggle('hidden', !n);
+  if ($('#app').classList.contains('m-notifs')) fillNotifScreen();
 }
+function fillNotifScreen() {
+  $('#notifReadAll').classList.toggle('hidden', !S.notifs.some((x) => !x.read));
+  $('#notifScreenList').innerHTML = S.notifs.length ? S.notifs.map((n) => `
+    <button type="button" class="bell-item${n.read ? '' : ' unread'}" data-notif="${esc(n.id)}">
+      ${avatar(n.actor || { display: '؟', hue: 0 }, 'sm')}
+      <span class="bell-text">${notifLine(n)}<time>${timeLabel(n.ts)}</time></span>
+    </button>`).join('') : `<div class="m-empty">${I.bell}<b>ما عندك إشعارات للحين</b><p class="muted">المنشن ومين دخل قروبك ومين يبث، كلها تطلع هنا.</p></div>`;
+}
+$('#notifScreenList').addEventListener('click', (e) => {
+  const item = e.target.closest('[data-notif]');
+  if (item) openNotif(item.dataset.notif);
+});
+$('#notifReadAll').addEventListener('click', () => send({ t: 'notif.read', all: true }));
 function notifLine(n) {
   const who = `<b>${esc(n.actor?.display || 'حساب محذوف')}</b>`;
   const f = n.channelId && findChannel(n.channelId);

@@ -1,11 +1,11 @@
 <!DOCTYPE html>
-<html lang="ar" dir="rtl">
+<html lang="ar" dir="rtl" data-theme="light">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>PLAY WTW — Play with me and talk with me</title>
   <meta name="description" content="قروبات ورومات صوت وشات وبث شاشة لين 4K مع أصحابك.">
-  <meta name="theme-color" content="#0b0918">
+  <meta name="theme-color" content="#e8eaee">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -122,7 +122,17 @@
         </div>
       </header>
 
+      <div id="msgsTop" class="msgs-top hidden">
+        <label class="msgs-search">
+          <span data-icon="search"></span>
+          <input id="dmSearch" type="search" maxlength="40" placeholder="دوّر في رسايلك" autocomplete="off" aria-label="دوّر في الرسايل الخاصة">
+        </label>
+        <button class="btn btn-soft btn-sm msgs-new" type="button" data-new-dm><span data-icon="userPlus"></span><span>رسالة جديدة</span></button>
+      </div>
+
       <div id="channelList" class="channel-list"></div>
+
+      <button id="fabDm" class="fab" type="button" title="رسالة جديدة" aria-label="رسالة جديدة" data-new-dm data-icon="chat"></button>
 
       <div id="voicePanel" class="voice-panel hidden">
         <div class="vp-info">
@@ -148,7 +158,7 @@
     <!-- المحتوى -->
     <main class="main">
       <header class="main-head">
-        <button id="navToggle" class="icon-btn ghost only-mobile" type="button" aria-label="القائمة" data-icon="menu"></button>
+        <button id="navToggle" class="icon-btn ghost only-mobile" type="button" aria-label="رجوع" title="رجوع" data-icon="arrow"></button>
         <span id="chanIcon" class="chan-icon"></span>
         <b id="chanName"></b>
         <span id="chanTopic" class="muted chan-topic"></span>
@@ -227,6 +237,32 @@
     </aside>
 
     <div id="scrim" class="scrim" aria-hidden="true"></div>
+
+    <!-- الجوال: صفحة الإشعارات وصفحة "أنت" والشريط السفلي -->
+    <section id="notifScreen" class="m-screen" aria-label="الإشعارات">
+      <header class="m-screen-head"><h2>الإشعارات</h2><button id="notifReadAll" class="btn-link" type="button">تحديد الكل كمقروء</button></header>
+      <div id="notifScreenList" class="bell-list m-notifs"></div>
+    </section>
+
+    <section id="youScreen" class="m-screen" aria-label="حسابي">
+      <div id="youCard" class="you-card"></div>
+      <div class="you-group">
+        <button type="button" class="you-row" data-you="profile"><span data-icon="user"></span><span>حسابي والصورة</span><span data-icon="arrow" class="you-go"></span></button>
+        <button type="button" class="you-row" data-you="voice"><span data-icon="mic"></span><span>الصوت والمايك</span><span data-icon="arrow" class="you-go"></span></button>
+        <button type="button" class="you-row" data-you="notify"><span data-icon="bell"></span><span>الإشعارات</span><span data-icon="arrow" class="you-go"></span></button>
+        <button type="button" class="you-row" data-you="look"><span data-icon="eye"></span><span>المظهر</span><span data-icon="arrow" class="you-go"></span></button>
+      </div>
+      <div class="you-group">
+        <button type="button" class="you-row" data-you="help"><span data-icon="help"></span><span>الدعم الفني</span><span data-icon="arrow" class="you-go"></span></button>
+        <button type="button" class="you-row danger" data-you="logout"><span data-icon="logOut"></span><span>تسجيل الخروج</span></button>
+      </div>
+    </section>
+
+    <nav id="tabbar" class="tabbar" aria-label="التنقل">
+      <button type="button" class="tab" data-tab="home"><span class="tab-ico"><span data-icon="home"></span><b id="tabHomeBadge" class="tab-badge hidden"></b></span><span>الرئيسية</span></button>
+      <button type="button" class="tab" data-tab="notifs"><span class="tab-ico"><span data-icon="bell"></span><b id="tabBellBadge" class="tab-badge hidden"></b></span><span>الإشعارات</span></button>
+      <button type="button" class="tab" data-tab="you"><span class="tab-ico" id="tabYouAvatar"></span><span>أنت</span></button>
+    </nav>
   </div>
 
   <!-- ================= النوافذ ================= -->
@@ -465,6 +501,13 @@
       </div>
 
       <div class="pane hidden" data-pane="look">
+        <div class="field">
+          <span class="label">الشكل</span>
+          <div class="seg">
+            <label><input type="radio" name="theme" value="light"><span>زجاجي فاتح</span></label>
+            <label><input type="radio" name="theme" value="dark"><span>داكن</span></label>
+          </div>
+        </div>
         <div class="field">
           <span class="label">حجم الخط</span>
           <div class="seg">

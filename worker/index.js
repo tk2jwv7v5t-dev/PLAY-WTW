@@ -467,7 +467,10 @@ export class Hub extends DurableObject {
   }
   dmPayload(dm, me) {
     const other = this.sql.exec('SELECT * FROM users WHERE id = ?', dm.a === me ? dm.b : dm.a).toArray()[0];
-    return { id: dm.id, other: other ? this.publicUser(other) : null, last: dm.last };
+    // آخر رسالة عشان تبان تحت اسم الشخص في القائمة
+    const lastMsg = this.sql.exec('SELECT user_id, text, file_id, ts FROM messages WHERE channel_id = ? ORDER BY ts DESC LIMIT 1', dm.id).toArray()[0];
+    const preview = lastMsg ? { uid: lastMsg.user_id, text: snippet(lastMsg.text || (lastMsg.file_id ? '📷 صورة' : ''), 80), ts: lastMsg.ts } : null;
+    return { id: dm.id, other: other ? this.publicUser(other) : null, last: dm.last, preview };
   }
   isBlocked(a, b) {
     return this.sql.exec('SELECT 1 FROM blocks WHERE (blocker = ? AND blocked = ?) OR (blocker = ? AND blocked = ?)', a, b, b, a).toArray().length > 0;
@@ -1039,8 +1042,8 @@ export class Hub extends DurableObject {
         const preview = { ...msg, text: text || '📷 صورة' };
         if (r.kind === 'dm') {
           // أول رسالة: الطرف الثاني يشوف المحادثة عنده
-          if (!r.dm.last) this.toUser(r.other, { t: 'dm.add', dm: this.dmPayload(r.dm, r.other) });
           this.sql.exec('UPDATE dms SET last = ? WHERE id = ?', now, r.id);
+          if (!r.dm.last) this.toUser(r.other, { t: 'dm.add', dm: this.dmPayload({ ...r.dm, last: now }, r.other) });
           this.toRoom(r, { t: 'msg', msg, nonce: clean(m.nonce, 40) });
           this.notifyDM(r, user, preview);
         } else {
