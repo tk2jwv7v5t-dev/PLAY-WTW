@@ -243,6 +243,8 @@ function handle(m) {
       S.dms = new Map((m.dms || []).filter((d) => d.other).map((d) => [d.id, d]));
       for (const d of S.dms.values()) S.users.set(d.other.id, d.other);
       S.blocks = new Set(m.blocks || []);
+      S.staff = m.staff || [];
+      for (const u of S.staff) S.users.set(u.id, u);
       S.reportCounts = m.reports || {};
       S.adminCount = m.adminCount || 0;
       renderAdmin();
@@ -535,22 +537,39 @@ function dmPreview(d) {
   return `<span class="dm-sub">${esc(who + (p.text || ''))}</span>`;
 }
 
+// علامة التوثيق (حساب الإدارة)
+const VB_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 1.5l2.6 1.9 3.2-.2 1 3.1 2.6 1.9-1 3.1 1 3.1-2.6 1.9-1 3.1-3.2-.2L12 22.5l-2.6-1.9-3.2.2-1-3.1-2.6-1.9 1-3.1-1-3.1 2.6-1.9 1-3.1 3.2.2z"/><path d="m8 12.2 2.7 2.7L16.2 9.4" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const vb = (u) => (u?.verified ? `<span class="vbadge" title="حساب موثّق — إدارة PLAY WTW" aria-label="موثّق">${VB_SVG}</span>` : '');
+
+// صف ثابت فوق الرسايل: راسل الإدارة (يطلع لكل المستخدمين)
+function staffRows() {
+  return (S.staff || []).filter((u) => u.id !== S.me.id).map((u) => {
+    const dm = [...S.dms.values()].find((d) => d.other?.id === u.id);
+    if (dm?.preview) return '';
+    return `<div class="dm-row staff-row" role="button" tabindex="0" data-dm-user="${esc(u.id)}">
+      <span class="dm-ava">${avatar(u, 'md')}<i class="st${S.online.has(u.id) ? ' on' : ''}"></i></span>
+      <span class="dm-main"><b class="dm-name">${esc(u.display)}${vb(u)}</b><span class="dm-sub">إدارة PLAY WTW · راسلنا لأي مشكلة أو اقتراح</span></span>
+      <span class="dm-side"><span class="staff-tag">رسمي</span></span>
+    </div>`;
+  }).join('');
+}
+
 function dmRows() {
   const q = $('#dmSearch').value.trim().toLowerCase();
-  const all = [...S.dms.values()].sort((a, b) => (b.last || 0) - (a.last || 0));
+  const all = [...S.dms.values()].sort((a, b) => (b.other?.verified ? 1 : 0) - (a.other?.verified ? 1 : 0) || (b.last || 0) - (a.last || 0));
   const dms = q ? all.filter((d) => `${d.other.display} ${d.other.username}`.toLowerCase().includes(q)) : all;
   const rows = dms.map((d) => {
     const unread = S.unread.has(d.id);
     const ts = d.preview?.ts || d.last;
     return `<div class="dm-row${d.id === S.cur.channel ? ' active' : ''}${unread ? ' unread' : ''}" role="button" tabindex="0" data-ch="${d.id}">
       <span class="dm-ava">${avatar(d.other, 'md')}<i class="st${S.online.has(d.other.id) ? ' on' : ''}" title="${S.online.has(d.other.id) ? 'متصل' : 'غير متصل'}"></i></span>
-      <span class="dm-main"><b class="dm-name">${esc(d.other.display)}</b>${dmPreview(d)}</span>
+      <span class="dm-main"><b class="dm-name">${esc(d.other.display)}${vb(d.other)}</b>${dmPreview(d)}</span>
       <span class="dm-side">${ts ? `<time>${timeAgo(ts)}</time>` : ''}${unread ? '<i class="dm-dot" aria-label="رسايل جديدة"></i>' : ''}</span>
     </div>`;
   }).join('');
   const empty = q ? `<div class="side-empty">ما لقينا أحد باسم "${esc(q)}".</div>`
     : `<div class="side-empty">ما عندك رسايل خاصة للحين.<br><button class="btn btn-soft btn-sm" type="button" data-new-dm>ابدأ محادثة</button></div>`;
-  return `<div class="ch-group dm-list"><div class="ch-group-head"><span>الرسائل الخاصة</span></div>${rows || empty}</div>`;
+  return `<div class="ch-group dm-list"><div class="ch-group-head"><span>الرسائل الخاصة</span></div>${q ? '' : staffRows()}${rows || empty}</div>`;
 }
 
 function channelRow(c) {
@@ -568,7 +587,7 @@ function channelRow(c) {
     const me = v.sid === S.sid;
     const speaking = me ? mic.speaking : levels.speaking(v.sid);
     return `<div class="vc-user${speaking ? ' speaking' : ''}${me ? '' : ' clickable'}" data-speak="${me ? 'me' : v.sid}"${me ? '' : ` data-user="${v.uid}" data-pop`}>
-      ${avatar(u, 'xs')}<span>${esc(u.display)}</span>
+      ${avatar(u, 'xs')}<span>${esc(u.display)}${vb(u)}</span>
       <span class="vc-icons">${v.sharing ? '<b class="live-tag">LIVE</b>' : ''}${settings.userMute[v.uid] ? `<i class="local-mute" title="مكتوم عندك">${I.volumeOff}</i>` : ''}${!v.mic ? I.micOff : ''}${v.deaf ? I.headphonesOff : ''}</span>
     </div>`;
   }).join('')}</div>`;
@@ -616,7 +635,7 @@ function renderMembers() {
   const on = all.filter((u) => S.online.has(u.id)), off = all.filter((u) => !S.online.has(u.id));
   const row = (u) => `<div class="member${S.online.has(u.id) ? '' : ' off'}${u.id === S.me.id ? '' : ' clickable'}"${u.id === S.me.id ? '' : ` data-user="${u.id}" data-pop`}>
     <div class="avatar-wrap">${avatar(u, 'sm')}<i class="status${S.online.has(u.id) ? ' on' : ''}"></i></div>
-    <div class="m-names"><b><span class="m-text">${esc(u.display)}</span>${u.id === s.owner ? `<span class="crown" title="صاحب القروب">${I.crown}</span>` : ''}</b><small dir="ltr">@${esc(u.username)}</small></div>
+    <div class="m-names"><b><span class="m-text">${esc(u.display)}${vb(u)}</span>${u.id === s.owner ? `<span class="crown" title="صاحب القروب">${I.crown}</span>` : ''}</b><small dir="ltr">@${esc(u.username)}</small></div>
   </div>`;
   el.innerHTML = `<div class="m-head">متصلين — ${on.length}</div>${on.map(row).join('')}
     ${off.length ? `<div class="m-head">غير متصلين — ${off.length}</div>${off.map(row).join('')}` : ''}`;
@@ -630,7 +649,7 @@ function renderUserPanel() {
   $('#meUser').textContent = '@' + S.me.username;
   $('#tabYouAvatar').innerHTML = avatar(S.me, 'xs');
   $('#youCard').innerHTML = `<div class="you-hero">${avatar(S.me, 'lg')}<i class="st on"></i></div>
-    <h2>${esc(S.me.display)}</h2><p class="muted" dir="ltr">@${esc(S.me.username)}</p>
+    <h2>${esc(S.me.display)}${vb(S.me)}</h2><p class="muted" dir="ltr">@${esc(S.me.username)}</p>
     <div class="you-actions">
       <button type="button" class="btn btn-soft btn-sm" data-you="mic">${S.micOn && S.hasMic && !S.deaf ? I.mic : I.micOff}<span>${S.micOn && S.hasMic && !S.deaf ? 'المايك شغال' : 'المايك مقفل'}</span></button>
       <button type="button" class="btn btn-soft btn-sm" data-you="deaf">${S.deaf ? I.headphonesOff : I.headphones}<span>${S.deaf ? 'الصوت مكتوم' : 'الصوت شغال'}</span></button>
@@ -766,7 +785,7 @@ function renderMessages(scrollToEnd) {
       ${m.pending ? '' : `<button class="msg-more" type="button" title="خيارات الرسالة" data-pop>${I.more}</button>`}
       ${cont ? `<span class="msg-time-h">${new Date(m.ts).toLocaleTimeString('ar', { hour: 'numeric', minute: '2-digit' })}</span>` : avatar(u)}
       <div class="msg-body">
-        ${cont ? '' : `<div class="msg-meta"><b style="--h:${u.hue}">${esc(u.display)}</b><time>${timeLabel(m.ts)}</time></div>`}
+        ${cont ? '' : `<div class="msg-meta"><b style="--h:${u.hue}">${esc(u.display)}${vb(u)}</b><time>${timeLabel(m.ts)}</time></div>`}
         ${m.text ? `<div class="msg-text">${renderText(m.text, findChannel(id)?.server)}</div>` : ''}
         ${m.file ? photoHtml(m.file, m.localSrc) : ''}
       </div>
@@ -1079,7 +1098,7 @@ function renderVoiceView(c) {
     const vol = settings.userVol[v.uid] ?? 100;
     return `<div class="tile${speaking ? ' speaking' : ''}${me ? '' : ' clickable'}" data-speak="${me ? 'me' : v.sid}" style="--h:${u.hue}"${me ? '' : ` data-user="${v.uid}" data-pop role="button" tabindex="0" title="مستوى صوته عندك"`}>
       ${avatar(u, 'xl')}
-      <div class="tile-name">${esc(u.display)}${me ? ' <small>(أنت)</small>' : ''}</div>
+      <div class="tile-name">${esc(u.display)}${vb(u)}${me ? ' <small>(أنت)</small>' : ''}</div>
       ${!me && vol !== 100 && !settings.userMute[v.uid] ? `<div class="tile-vol-tag" dir="ltr">${vol}%</div>` : ''}
       <div class="tile-icons">${settings.userMute[v.uid] ? `<i class="local-mute" title="مكتوم عندك">${I.volumeOff}</i>` : ''}${!v.mic ? I.micOff : ''}${v.deaf ? I.headphonesOff : ''}${v.sharing ? '<b class="live-tag">LIVE</b>' : ''}</div>
     </div>`;
@@ -1207,7 +1226,7 @@ function openUserPop(anchor, uid) {
   const u = userOf(uid);
   const vol = settings.userVol[uid] ?? 100;
   openPop(anchor, `
-    <div class="pop-user">${avatar(u, 'sm')}<div><b>${esc(u.display)}</b><small dir="ltr">@${esc(u.username)}</small></div></div>
+    <div class="pop-user">${avatar(u, 'sm')}<div><b>${esc(u.display)}${vb(u)}</b><small dir="ltr">@${esc(u.username)}</small></div></div>
     <label class="field"><span class="label">مستوى صوته عندك <b id="puVal" dir="ltr">${vol}%</b></span>
       <input id="puVol" type="range" min="0" max="200" step="5" value="${vol}"></label>
     <label class="switch"><input type="checkbox" id="puMute"${settings.userMute[uid] ? ' checked' : ''}><i></i><span>اكتمه عندي</span></label>
@@ -2032,6 +2051,8 @@ $('#channelList').addEventListener('click', async (e) => {
     if (c && await confirmBox(`تحذف ${c.name}؟`, c.kind === 'text' ? 'كل رسايل الروم بتنحذف.' : 'اللي فيه بيطلعون منه.', 'احذف')) send({ t: 'channel.delete', channelId: c.id });
     return;
   }
+  const st = e.target.closest('[data-dm-user]');
+  if (st) { startDm({ userId: st.dataset.dmUser }); return; }
   const row = e.target.closest('[data-ch]');
   if (!row) return;
   const id = row.dataset.ch;
@@ -2166,9 +2187,11 @@ function openHelp() {
   if (SUPPORT.email) links.push(`<a class="btn btn-primary btn-sm" href="mailto:${esc(SUPPORT.email)}?subject=${encodeURIComponent('مشكلة في PLAY WTW')}">راسلنا على الإيميل</a>`);
   for (const l of SUPPORT.links || []) {
     if (!/^https:\/\//.test(l.url)) continue;
-    const style = links.length ? 'btn-soft' : 'btn-primary'; // أول طريقة تواصل تكون الزر الرئيسي
+    const style = links.length || S.staff?.length ? 'btn-soft' : 'btn-primary'; // أول طريقة تواصل تكون الزر الرئيسي
     links.push(`<a class="btn ${style} btn-sm" href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.label)}</a>`);
   }
+  const staff = (S.staff || []).find((u) => u.id !== S.me?.id);
+  if (staff) links.unshift(`<button type="button" class="btn btn-primary btn-sm" data-dm-user="${esc(staff.id)}">راسل الإدارة هنا في الموقع</button>`);
   $('#contactLinks').innerHTML = links.join('');
   $('#contactBox').classList.toggle('hidden', !links.length);
   openModal('#helpModal');
@@ -2331,7 +2354,7 @@ function updateMentionBox() {
   if (!mention.list.length) { box.classList.add('hidden'); return; }
   box.innerHTML = `<div class="mb-title">أعضاء القروب</div>` + mention.list.map((u, i) => `
     <button type="button" class="mb-item${i === mention.index ? ' active' : ''}" role="option" aria-selected="${i === mention.index}" data-i="${i}">
-      ${avatar(u, 'xs')}<b>${esc(u.display)}</b><small dir="ltr">@${esc(u.username)}</small>
+      ${avatar(u, 'xs')}<b>${esc(u.display)}${vb(u)}</b><small dir="ltr">@${esc(u.username)}</small>
     </button>`).join('');
   box.classList.remove('hidden');
 }
@@ -2732,7 +2755,7 @@ function openDmModal() {
   $('#dmForm').reset();
   $('#dmPeople').innerHTML = people.length
     ? `<div class="mb-title">ناس من قروباتك</div>` + people.map((u) => `
-      <button type="button" class="mb-item" data-dm-user="${esc(u.id)}">${avatar(u, 'xs')}<b>${esc(u.display)}</b>${S.online.has(u.id) ? '<i class="dot on"></i>' : ''}<small dir="ltr">@${esc(u.username)}</small></button>`).join('')
+      <button type="button" class="mb-item" data-dm-user="${esc(u.id)}">${avatar(u, 'xs')}<b>${esc(u.display)}${vb(u)}</b>${S.online.has(u.id) ? '<i class="dot on"></i>' : ''}<small dir="ltr">@${esc(u.username)}</small></button>`).join('')
     : '<p class="hint">اكتب اسم المستخدم حق الشخص اللي تبي تراسله.</p>';
   openModal('#dmModal');
 }
@@ -2951,7 +2974,7 @@ function renderHome() {
             const where = v && findChannel(v.channel);
             return `<div class="hl-row">
               <div class="avatar-wrap">${avatar(u, 'sm')}<i class="status on"></i></div>
-              <span class="hl-text"><b>${esc(u.display)}</b><small>${where ? `في ${esc(where.channel.name)}` : 'متصل'}</small></span>
+              <span class="hl-text"><b>${esc(u.display)}${vb(u)}</b><small>${where ? `في ${esc(where.channel.name)}` : 'متصل'}</small></span>
               <button type="button" class="icon-btn ghost sm" data-dm-user="${esc(u.id)}" title="ارسل له رسالة" aria-label="ارسل رسالة لـ ${esc(u.display)}">${I.chat}</button>
             </div>`;
           }).join('')}</div>` : `<p class="home-empty">ما أحد من قروباتك متصل الحين.</p>`}
@@ -2960,7 +2983,7 @@ function renderHome() {
         <section class="home-card" ${card()}>
           <div class="hc-head"><h2>آخر المحادثات</h2><button type="button" class="btn-link" data-home-act="dm">جديدة</button></div>
           ${dms.length ? `<div class="home-list">${dms.map((d) => `<button type="button" class="hl-row${S.unread.has(d.id) ? ' unread' : ''}" data-open-dm="${esc(d.id)}">
-            ${avatar(d.other, 'sm')}<span class="hl-text"><b>${esc(d.other.display)}</b><small>${d.last ? timeLabel(d.last) : ''}</small></span>
+            ${avatar(d.other, 'sm')}<span class="hl-text"><b>${esc(d.other.display)}${vb(d.other)}</b><small>${d.last ? timeLabel(d.last) : ''}</small></span>
             ${S.unread.has(d.id) ? '<i class="dot unread-dot"></i>' : ''}</button>`).join('')}</div>`
             : `<p class="home-empty">ما عندك محادثات خاصة للحين.</p>`}
         </section>
@@ -3000,3 +3023,9 @@ $('#homeInner').addEventListener('click', (e) => {
 });
 // التحية تتغير مع الوقت
 setInterval(refreshHome, 60000);
+
+// زر "راسل الإدارة" في الدعم الفني
+$('#contactLinks').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-dm-user]');
+  if (b) startDm({ userId: b.dataset.dmUser });
+});

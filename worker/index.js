@@ -792,7 +792,17 @@ export class Hub extends DurableObject {
   }
 
   publicUser(u) {
-    return { id: u.id, username: u.username, display: u.display, hue: u.hue };
+    const pub = { id: u.id, username: u.username, display: u.display, hue: u.hue };
+    // حساب الإدارة عليه علامة توثيق
+    if (this.isAdmin(u)) pub.verified = true;
+    return pub;
+  }
+  // حسابات الإدارة: تطلع لكل المستخدمين عشان يقدرون يراسلونها
+  staffList() {
+    const names = this.adminNames();
+    if (!names.length) return [];
+    return this.sql.exec(`SELECT * FROM users WHERE username IN (${names.map(() => '?').join(',')}) AND suspended = 0`, ...names)
+      .toArray().map((u) => this.publicUser(u));
   }
 
   /* ---------- WebSocket ---------- */
@@ -877,7 +887,7 @@ export class Hub extends DurableObject {
     return {
       t: 'ready', me: { ...this.publicUser(user), admin: this.isAdmin(user) }, sid, servers, online, voice: this.voiceStates(channelIds), prefs,
       adminCount: this.isAdmin(user) ? this.adminOpenCount() : 0,
-      notifs: this.notifList(user.id), dms, blocks: this.blockList(user.id), reports,
+      notifs: this.notifList(user.id), dms, blocks: this.blockList(user.id), reports, staff: this.staffList(),
     };
   }
 

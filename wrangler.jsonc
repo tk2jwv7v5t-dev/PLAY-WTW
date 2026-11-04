@@ -14,5 +14,5 @@
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Hub"] }],
   "observability": { "enabled": true },
   // مشرفين الموقع (اسم المستخدم، وأكثر من واحد يتفصلون بفاصلة). توصلهم كل البلاغات
-  "vars": { "ADMINS": "" }
+  "vars": { "ADMINS": "mj_" }
 }
