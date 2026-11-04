@@ -539,7 +539,7 @@ function dmPreview(d) {
 
 // علامة التوثيق (حساب الإدارة)
 const VB_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 1.5l2.6 1.9 3.2-.2 1 3.1 2.6 1.9-1 3.1 1 3.1-2.6 1.9-1 3.1-3.2-.2L12 22.5l-2.6-1.9-3.2.2-1-3.1-2.6-1.9 1-3.1-1-3.1 2.6-1.9 1-3.1 3.2.2z"/><path d="m8 12.2 2.7 2.7L16.2 9.4" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-const vb = (u) => (u?.verified ? `<span class="vbadge" title="حساب موثّق — إدارة PLAY WTW" aria-label="موثّق">${VB_SVG}</span>` : '');
+const vb = (u) => (u?.verified ? `<span class="vbadge" title="حساب موثّق — الدعم الفني لـ PLAY WTW" aria-label="موثّق">${VB_SVG}</span>` : '');
 
 // صف ثابت فوق الرسايل: راسل الإدارة (يطلع لكل المستخدمين)
 function staffRows() {
@@ -548,7 +548,7 @@ function staffRows() {
     if (dm?.preview) return '';
     return `<div class="dm-row staff-row" role="button" tabindex="0" data-dm-user="${esc(u.id)}">
       <span class="dm-ava">${avatar(u, 'md')}<i class="st${S.online.has(u.id) ? ' on' : ''}"></i></span>
-      <span class="dm-main"><b class="dm-name">${esc(u.display)}${vb(u)}</b><span class="dm-sub">إدارة PLAY WTW · راسلنا لأي مشكلة أو اقتراح</span></span>
+      <span class="dm-main"><b class="dm-name">${esc(u.display)}${vb(u)}</b><span class="dm-sub">الدعم الفني · راسلنا لأي مشكلة أو اقتراح</span></span>
       <span class="dm-side"><span class="staff-tag">رسمي</span></span>
     </div>`;
   }).join('');
@@ -2191,7 +2191,7 @@ function openHelp() {
     links.push(`<a class="btn ${style} btn-sm" href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.label)}</a>`);
   }
   const staff = (S.staff || []).find((u) => u.id !== S.me?.id);
-  if (staff) links.unshift(`<button type="button" class="btn btn-primary btn-sm" data-dm-user="${esc(staff.id)}">راسل الإدارة هنا في الموقع</button>`);
+  if (staff) links.unshift(`<button type="button" class="btn btn-primary btn-sm" data-dm-user="${esc(staff.id)}">راسل الدعم الفني هنا في الموقع</button>`);
   $('#contactLinks').innerHTML = links.join('');
   $('#contactBox').classList.toggle('hidden', !links.length);
   openModal('#helpModal');

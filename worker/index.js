@@ -24,6 +24,9 @@ const TURN_TTL = 86400; // صلاحية بيانات TURN بالثواني
 const MAX_ICON_BYTES = 300 * 1024; // المتصفح يصغّر الصورة قبل الرفع، فهذا حد احتياطي
 const NOTIFY_LEVELS = ['all', 'mentions', 'none'];
 const MAX_NOTIFS = 100;       // نحتفظ بآخر 100 إشعار لكل شخص
+// اسم حساب الإدارة (الدعم الفني) — ثابت ومحجوز، ما أحد ثاني يقدر يتسمّى فيه
+const STAFF_NAME = 'Play WTW Support';
+const reservedName = (name) => /play\s*[-_.~]?\s*wtw|support|الدعم|دعم فني|الإدارة|الادارة|ادارة الموقع|إدارة الموقع|admin|مشرف/i.test(String(name || '').normalize('NFKC'));
 const MAX_PUSH_DEVICES = 10;  // أجهزة الإشعارات لكل حساب
 const snippet = (t, n = 140) => (t.length > n ? Array.from(t).slice(0, n).join('') + '…' : t);
 const MAX_FILE_BYTES = 1536 * 1024;   // الصور تتصغّر في المتصفح قبل الرفع، فهذا حد احتياطي
@@ -233,6 +236,7 @@ export class Hub extends DurableObject {
     const password = String(b.password || '');
     const display = clean(b.display, 32) || username;
     if (!/^[a-z0-9_.]{3,20}$/.test(username)) return fail('bad_username');
+    if (!this.adminNames().includes(username) && reservedName(display)) return fail('reserved_name');
     if (password.length < 8 || password.length > 128) return fail('bad_password');
     if (this.sql.exec('SELECT 1 FROM users WHERE username = ?', username).toArray().length) return fail('username_taken', 409);
     this.noteFailure(req, this.signups, 3600000);
@@ -357,9 +361,15 @@ export class Hub extends DurableObject {
   async authed(req) {
     const token = cookie(req, 'sid');
     if (!token) return null;
-    return this.sql.exec(
+    const user = this.sql.exec(
       'SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ? AND s.expires > ? AND u.suspended = 0',
       await sha256(token), Date.now()).toArray()[0] || null;
+    // حساب الإدارة يطلع دايم باسم الدعم الفني
+    if (user && this.isAdmin(user) && user.display !== STAFF_NAME) {
+      this.sql.exec('UPDATE users SET display = ? WHERE id = ?', STAFF_NAME, user.id);
+      user.display = STAFF_NAME;
+    }
+    return user;
   }
 
   /* ---------- إدارة الموقع ----------
@@ -1257,8 +1267,9 @@ export class Hub extends DurableObject {
 
       /* ---- البروفايل ---- */
       case 'profile.update': {
-        const display = clean(m.display, 32);
+        const display = this.isAdmin(user) ? STAFF_NAME : clean(m.display, 32);
         if (!display) return error('bad_name');
+        if (!this.isAdmin(user) && reservedName(display)) return error('reserved_name');
         const hue = Number.isFinite(m.hue) ? ((Math.round(m.hue) % 360) + 360) % 360 : user.hue;
         this.sql.exec('UPDATE users SET display = ?, hue = ? WHERE id = ?', display, hue, att.uid);
         const updated = { ...this.publicUser(user), display, hue };
