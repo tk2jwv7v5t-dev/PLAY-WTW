@@ -50,6 +50,10 @@ const S = {
   invite: new URLSearchParams(location.search).get('invite'),
   viewPref: new Map(),  // sid -> الجودة اللي اخترتها لبثه
   prefs: {},            // serverId -> مستوى الإشعارات (all / mentions / none)
+  dms: new Map(),       // id -> { id, other, last } المحادثات الخاصة
+  blocks: new Set(),    // اللي حظرتهم
+  reportCounts: {},     // serverId -> عدد البلاغات المفتوحة (لصاحب القروب)
+  attach: null,         // الصورة اللي بترسلها { data, w, h }
   notifs: [],           // قائمة الجرس
   mentions: new Map(),  // channelId -> عدد المنشنات اللي ما شفتها
   pushOn: false,        // إشعارات الجهاز مفعّلة على هذا الجهاز
@@ -236,6 +240,10 @@ function handle(m) {
       if (!S.servers.has(S.cur.server)) S.cur.server = store.get('lastServer', null);
       if (!S.servers.has(S.cur.server)) S.cur.server = S.servers.keys().next().value || null;
       S.prefs = m.prefs || {};
+      S.dms = new Map((m.dms || []).filter((d) => d.other).map((d) => [d.id, d]));
+      for (const d of S.dms.values()) S.users.set(d.other.id, d.other);
+      S.blocks = new Set(m.blocks || []);
+      S.reportCounts = m.reports || {};
       S.notifs = m.notifs || [];
       selectServer(S.cur.server, true);
       renderBell();
@@ -261,6 +269,7 @@ function handle(m) {
     case 'server.remove': {
       const s = S.servers.get(m.serverId);
       if (!s) break;
+      if (m.banned) toast(`انطردت من قروب ${s.name}`, 'err');
       if (S.myVoice && s.channels.some((c) => c.id === S.myVoice)) leaveVoice();
       S.servers.delete(m.serverId);
       if (S.cur.server === m.serverId) {
@@ -330,11 +339,29 @@ function handle(m) {
       for (const s of S.servers.values()) if (s.members.has(u.id)) s.members.set(u.id, u);
       if (u.id === S.me.id) S.me = u;
       renderAll();
-      if (S.cur.channel && channelKind(S.cur.channel) === 'text') renderMessages(true);
+      if (S.cur.channel && isChat(S.cur.channel)) renderMessages(true);
       break;
     }
     case 'rtc': S.vs?.onSignal(m.from, m.d); break;
     case 'notify.pref': S.prefs[m.serverId] = m.level; renderRail(); break;
+    case 'dm.add': {
+      if (!m.dm.other) break;
+      S.users.set(m.dm.other.id, m.dm.other);
+      S.dms.set(m.dm.id, { ...S.dms.get(m.dm.id), ...m.dm });
+      if (!settle(m.req, m.dm)) { renderRail(); renderSidebar(); }
+      break;
+    }
+    case 'blocks': S.blocks = new Set(m.list); settle(m.req, m.list); renderMain(); break;
+    case 'reported': S.blocks = new Set(m.blocks || []); settle(m.req, true); renderMain(); break;
+    case 'msg.remove': {
+      const st = S.msgs.get(m.channel);
+      if (!st) break;
+      st.list = st.list.filter((x) => x.id !== m.id);
+      if (S.cur.channel === m.channel) renderMessages(false);
+      break;
+    }
+    case 'reports.count': S.reportCounts[m.serverId] = m.n; renderReportCount(); break;
+    case 'reports': settle(m.req, m.list); if (!$('#reportsModal').classList.contains('hidden')) fillReports(m.serverId, m.list); break;
     case 'notif': {
       S.notifs.unshift(m.notif);
       S.notifs.length = Math.min(S.notifs.length, 50);
@@ -363,7 +390,18 @@ function findChannel(id) {
     const c = s.channels.find((x) => x.id === id);
     if (c) return { server: s, channel: c };
   }
+  const dm = S.dms.get(id);
+  if (dm) return { server: null, channel: { id, name: dm.other?.display || 'حساب محذوف', kind: 'dm', dm } };
   return null;
+}
+// روم فيه شات (كتابي في قروب، أو محادثة خاصة)
+const isChat = (id) => ['text', 'dm'].includes(channelKind(id));
+function openChannel(id) {
+  const f = findChannel(id);
+  if (!f) return false;
+  S.cur.server = f.server?.id ?? null;
+  selectChannel(id);
+  return true;
 }
 const channelKind = (id) => findChannel(id)?.channel.kind;
 const defaultChannel = (s) => s?.channels.find((c) => c.kind === 'text')?.id || s?.channels[0]?.id || null;
@@ -374,8 +412,8 @@ function selectServer(id, fromReady = false) {
   S.cur.server = id;
   store.set('lastServer', id);
   const s = curServer();
-  let ch = s ? S.lastChannel[s.id] : null;
-  if (!s?.channels.some((c) => c.id === ch)) ch = defaultChannel(s);
+  let ch = s ? S.lastChannel[s.id] : S.lastChannel.home;
+  if (s ? !s.channels.some((c) => c.id === ch) : !S.dms.has(ch)) ch = s ? defaultChannel(s) : null;
   if (fromReady && S.cur.channel && s?.channels.some((c) => c.id === S.cur.channel)) ch = S.cur.channel;
   selectChannel(ch);
 }
@@ -383,12 +421,12 @@ function selectServer(id, fromReady = false) {
 function selectChannel(id) {
   S.cur.channel = id;
   const s = curServer();
-  if (s && id) { S.lastChannel[s.id] = id; store.set('lastChannel', S.lastChannel); }
+  if (id) { S.lastChannel[s ? s.id : 'home'] = id; store.set('lastChannel', S.lastChannel); }
   S.unread.delete(id);
   S.mentions.delete(id);
   closeNav();
   renderAll();
-  if (id && channelKind(id) === 'text') {
+  if (id && isChat(id)) {
     renderMessages(true);
     loadHistory(id);
     if (matchMedia('(pointer: fine)').matches) $('#msgInput').focus();
@@ -419,16 +457,28 @@ function renderRail() {
     </button>`;
   }).join('');
   $('#homeBtn').classList.toggle('active', !S.cur.server);
+  const dmUnread = [...S.dms.keys()].filter((id) => S.unread.has(id)).length;
+  $('#homeBtn').querySelector('.rail-badge')?.remove();
+  if (dmUnread) $('#homeBtn').insertAdjacentHTML('beforeend', `<b class="rail-badge" aria-label="${dmUnread} رسايل خاصة جديدة">${dmUnread}</b>`);
 }
 
 function renderSidebar() {
   const s = curServer();
-  $('#serverName').textContent = s ? s.name : 'PLAY WTW';
+  $('#serverName').textContent = s ? s.name : 'الرسائل الخاصة';
   $('#serverHeadBtn').disabled = !s;
   $('#app').classList.toggle('is-owner', !!isOwner(s));
+  renderReportCount();
   const list = $('#channelList');
   if (!s) {
-    list.innerHTML = `<div class="side-empty">ما عندك قروب مختار.<br>اضغط <b>+</b> عشان تسوي أو تدخل قروب.</div>`;
+    const dms = [...S.dms.values()].sort((a, b) => (b.last || 0) - (a.last || 0));
+    list.innerHTML = `<div class="ch-group">
+      <div class="ch-group-head"><span>الرسائل الخاصة</span><button class="mini-btn" type="button" data-new-dm title="رسالة خاصة جديدة">${I.plus}</button></div>
+      ${dms.length ? dms.map((d) => `
+        <div class="ch dm${d.id === S.cur.channel ? ' active' : ''}${S.unread.has(d.id) ? ' unread' : ''}" role="button" tabindex="0" data-ch="${d.id}">
+          ${avatar(d.other, 'xs')}<span class="ch-name">${esc(d.other.display)}</span>
+          ${S.online.has(d.other.id) ? '<i class="dot on" title="متصل"></i>' : ''}
+        </div>`).join('') : `<div class="side-empty">ما عندك رسايل خاصة للحين.<br><button class="btn btn-soft btn-sm" type="button" data-new-dm>ابدأ محادثة</button></div>`}
+    </div>`;
     return;
   }
   const group = (kind, title) => {
@@ -467,7 +517,7 @@ function renderMain() {
   const found = S.cur.channel ? findChannel(S.cur.channel) : null;
   const c = found?.server === s ? found.channel : null;
   $('#emptyView').classList.toggle('hidden', !!c);
-  $('#textView').classList.toggle('hidden', c?.kind !== 'text');
+  $('#textView').classList.toggle('hidden', !['text', 'dm'].includes(c?.kind));
   $('#voiceView').classList.toggle('hidden', c?.kind !== 'voice');
   // لما تتغير الصفحة أو الروم نعرضها بحركة خفيفة
   const viewKey = c ? c.id : `empty:${s?.id || ''}`;
@@ -476,11 +526,17 @@ function renderMain() {
     const v = $(c ? (c.kind === 'voice' ? '#voiceView' : '#textView') : '#emptyView');
     v.classList.remove('view-in'); void v.offsetWidth; v.classList.add('view-in');
   }
-  $('#chanIcon').innerHTML = c ? (c.kind === 'voice' ? I.volume : I.hash) : '';
+  const dm = c?.kind === 'dm' ? c.dm : null;
+  $('#chanIcon').innerHTML = c ? (c.kind === 'voice' ? I.volume : dm ? I.at : I.hash) : '';
   $('#chanName').textContent = c ? c.name : s ? s.name : 'PLAY WTW';
-  $('#chanTopic').textContent = c?.kind === 'voice' ? 'روم صوتي' : c ? `في ${s.name}` : '';
-  $('#msgInput').placeholder = c ? `اكتب رسالة في #${c.name}` : '';
-  document.title = c ? `${c.kind === 'voice' ? '🔊' : '#'}${c.name} · ${s.name} — PLAY WTW` : 'PLAY WTW';
+  $('#chanTopic').textContent = c?.kind === 'voice' ? 'روم صوتي' : dm ? `@${dm.other?.username || ''}` : c ? `في ${s.name}` : '';
+  $('#msgInput').placeholder = dm ? `اكتب رسالة لـ ${c.name}` : c ? `اكتب رسالة في #${c.name}` : '';
+  document.title = c ? `${dm ? '@' : c.kind === 'voice' ? '🔊' : '#'}${c.name}${s ? ` · ${s.name}` : ''} — PLAY WTW` : 'PLAY WTW';
+  // حظرته: نقفل الكتابة ونعطيه زر فك الحظر
+  const blocked = !!dm && S.blocks.has(dm.other?.id);
+  $('#blockedBar').classList.toggle('hidden', !blocked);
+  $('#composer').classList.toggle('hidden', blocked);
+  $('#app').classList.toggle('in-dm', !s);
   if (c?.kind === 'voice') renderVoiceView(c);
   renderVoicePanel();
 }
@@ -562,6 +618,8 @@ function onHistory(m) {
 }
 
 function onMessage(msg, nonce) {
+  const dm = S.dms.get(msg.channel);
+  if (dm) { dm.last = msg.ts; renderSidebar(); }
   const st = chanStore(msg.channel);
   if (nonce) st.list = st.list.filter((x) => x.nonce !== nonce);
   if (st.list.some((x) => x.id === msg.id)) return;
@@ -579,7 +637,7 @@ function onMessage(msg, nonce) {
   }
   if (mine) return;
   const mentioned = mentionsMe(msg);
-  const level = levelOf(findChannel(msg.channel)?.server.id);
+  const level = levelOf(findChannel(msg.channel)?.server?.id);
   const wanted = level === 'all' || (level === 'mentions' && mentioned);
   if (wanted) notifyMessage(msg, mentioned);
   if (!visible) {
@@ -612,7 +670,9 @@ function renderMessages(scrollToEnd) {
   const c = findChannel(id)?.channel;
   let html = '';
   if (st.loaded && !st.more) {
-    html += `<div class="chan-start"><div class="cs-icon">${I.hash}</div><h2>هلا في #${esc(c?.name || '')}</h2><p class="muted">هذي بداية الروم. ابدأ السالفة!</p></div>`;
+    html += c?.kind === 'dm'
+      ? `<div class="chan-start">${avatar(c.dm.other, 'lg')}<h2>${esc(c.name)}</h2><p class="muted">هذي بداية محادثتك الخاصة مع ${esc(c.name)} <span dir="ltr">@${esc(c.dm.other?.username || '')}</span>. محد يشوفها غيركم.</p></div>`
+      : `<div class="chan-start"><div class="cs-icon">${I.hash}</div><h2>هلا في #${esc(c?.name || '')}</h2><p class="muted">هذي بداية الروم. ابدأ السالفة!</p></div>`;
   } else if (st.more && st.loaded) {
     html += `<button class="load-more" type="button" id="loadMore">رسايل أقدم</button>`;
   } else if (!st.loaded) {
@@ -627,11 +687,13 @@ function renderMessages(scrollToEnd) {
       prev = null;
     }
     const cont = prev && prev.uid === m.uid && m.ts - prev.ts < 5 * 60000;
-    html += `<div class="msg${cont ? ' cont' : ''}${m.pending ? ' pending' : ''}${m.uid !== S.me.id && mentionsMe(m) ? ' mentioned' : ''}">
+    html += `<div class="msg${cont ? ' cont' : ''}${m.pending ? ' pending' : ''}${m.uid !== S.me.id && mentionsMe(m) ? ' mentioned' : ''}" data-msg="${esc(m.id)}">
+      ${m.pending ? '' : `<button class="msg-more" type="button" title="خيارات الرسالة" data-pop>${I.more}</button>`}
       ${cont ? `<span class="msg-time-h">${new Date(m.ts).toLocaleTimeString('ar', { hour: 'numeric', minute: '2-digit' })}</span>` : avatar(u)}
       <div class="msg-body">
         ${cont ? '' : `<div class="msg-meta"><b style="--h:${u.hue}">${esc(u.display)}</b><time>${timeLabel(m.ts)}</time></div>`}
-        <div class="msg-text">${renderText(m.text, findChannel(id)?.server)}</div>
+        ${m.text ? `<div class="msg-text">${renderText(m.text, findChannel(id)?.server)}</div>` : ''}
+        ${m.file ? photoHtml(m.file, m.localSrc) : ''}
       </div>
     </div>`;
     prev = m;
@@ -651,17 +713,39 @@ $('#messages').addEventListener('scroll', () => {
   }
 });
 
-function sendMessage() {
+async function sendMessage() {
   const input = $('#msgInput');
   const text = input.value.trim();
-  if (!text || !S.cur.channel) return;
+  const attach = S.attach;
+  const channel = S.cur.channel;
+  if ((!text && !attach) || !channel) return;
   if (!S.wsOpen) { toast(ERRORS.network, 'err'); return; }
   const nonce = Math.random().toString(36).slice(2);
-  chanStore(S.cur.channel).list.push({ id: 'p-' + nonce, nonce, channel: S.cur.channel, uid: S.me.id, text, ts: Date.now(), pending: true });
+  const pending = { id: 'p-' + nonce, nonce, channel, uid: S.me.id, text, ts: Date.now(), pending: true };
+  if (attach) { pending.file = { id: null, w: attach.w, h: attach.h }; pending.localSrc = attach.data; }
+  chanStore(channel).list.push(pending);
   renderMessages(true);
-  send({ t: 'msg.send', channelId: S.cur.channel, text, nonce });
   input.value = '';
   autosize();
+  clearAttach();
+  let fileId;
+  if (attach) {
+    try {
+      const r = await fetch('/api/upload', {
+        method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ scope: channel, image: attach.data, w: attach.w, h: attach.h }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || 'server_error');
+      fileId = d.id;
+    } catch (err) {
+      chanStore(channel).list = chanStore(channel).list.filter((x) => x.nonce !== nonce);
+      if (S.cur.channel === channel) renderMessages(false);
+      toast(`الصورة ما انرسلت: ${ERRORS[err.message] || ERRORS.network}`, 'err');
+      return;
+    }
+  }
+  send({ t: 'msg.send', channelId: channel, text, fileId, nonce });
 }
 function autosize() {
   const t = $('#msgInput');
@@ -1005,9 +1089,12 @@ $('#screens').addEventListener('input', (e) => {
   const t = S.tiles.get(e.target.closest('.screen-tile').dataset.sid);
   if (t) { t.vol = Number(e.target.value); applyVolumes(); }
 });
+// دبل كلك بالماوس يفتح ملء الشاشة (في الجوال ما فيه حركة للضغطتين)
+let lastPointer = 'mouse';
+addEventListener('pointerdown', (e) => { lastPointer = e.pointerType; }, { capture: true, passive: true });
 $('#screens').addEventListener('dblclick', (e) => {
   const el = e.target.closest('.screen-tile');
-  if (el && e.target.tagName === 'VIDEO') fullscreen(el);
+  if (el && e.target.tagName === 'VIDEO' && lastPointer === 'mouse') fullscreen(el);
 });
 
 /* ---- قائمة منبثقة (مستوى صوت شخص، جودة البث) ---- */
@@ -1223,14 +1310,6 @@ function setupZoom(t) {
   const up = (e) => {
     if (!pts.delete(e.pointerId)) return;
     snap();
-    // ضغطتين بالإصبع: تكبير/ملء شاشة (الماوس عنده dblclick)
-    if (e.pointerType !== 'mouse' && !moved && pts.size === 0) {
-      const now = Date.now();
-      if (now - lastTap < 320) {
-        lastTap = 0;
-        if (t.zoom.s > 1) setZoom(t, 1, 0, 0); else fullscreen(t.el);
-      } else lastTap = now;
-    }
   };
   v.addEventListener('pointerup', up);
   v.addEventListener('pointercancel', up);
@@ -1527,6 +1606,7 @@ $('#serverMenu').addEventListener('click', async (e) => {
   switch (b.dataset.act) {
     case 'invite': openInvite(s); break;
     case 'notify': openLevelPop(s); break;
+    case 'reports': openReports(s.id); break;
     case 'newText': openChannelModal('text'); break;
     case 'newVoice': openChannelModal('voice'); break;
     case 'rename':
@@ -1671,9 +1751,7 @@ async function openSettings() {
   $('#profileHue').value = S.me.hue;
   renderProfilePreview();
   openModal('#settingsModal');
-  if (!mic.running) {
-    try { await mic.start(settings); S.hasMic = true; } catch { $('#nsHint').textContent = 'ما قدرنا نوصل للمايك — اسمح له من إعدادات المتصفح.'; }
-  }
+  // ما نشغّل المايك إلا لو انت في روم صوتي، أو ضغطت "جرّب المايك"
   updateNsHint();
   await fillDevices();
 }
@@ -1690,7 +1768,11 @@ async function fillDevices() {
 }
 function updateNsHint() {
   const h = $('#nsHint');
-  if (!mic.running) return;
+  if (!mic.running) {
+    h.classList.remove('warn');
+    h.textContent = 'المايك مطفي الحين. اضغط "جرّب المايك" تحت عشان تسمع صوتك وتشوف مستواه.';
+    return;
+  }
   if (mic.nsError) { h.textContent = `"${NS_LABEL[settings.ns]}" ما اشتغل على جهازك، جرّب نوع ثاني.`; h.classList.add('warn'); return; }
   h.classList.remove('warn');
   h.textContent = {
@@ -1749,8 +1831,12 @@ $('#settingsModal').addEventListener('input', (e) => {
   if (t.id === 'outVol') { settings.outVol = Number(t.value); applyVolumes(); saveSettings(); updateVolLabels(); }
   if (t.id === 'profileHue' || t.id === 'profileDisplay') renderProfilePreview();
 });
-$('#micTest').addEventListener('click', () => {
+$('#micTest').addEventListener('click', async () => {
   const on = !$('#micTest').classList.contains('active');
+  if (on && !mic.running) {
+    try { await mic.start(settings); S.hasMic = true; updateNsHint(); fillDevices(); }
+    catch (e) { toast(e.name === 'NotAllowedError' ? 'المتصفح منع المايك. اسمح له من أيقونة القفل جنب رابط الموقع' : 'ما قدرنا نشغّل المايك', 'err'); return; }
+  }
   $('#micTest').classList.toggle('active', on);
   $('#micTest').textContent = on ? 'وقف التجربة' : 'جرّب المايك';
   mic.setMonitor(on);
@@ -1941,13 +2027,13 @@ function notifyMessage(msg, mentioned) {
   const f = findChannel(msg.channel);
   const u = userOf(msg.uid);
   try {
-    const n = new Notification(`${u.display} ${mentioned ? 'منشنك' : ''} في #${f?.channel.name || ''}`, {
+    const n = new Notification(f?.channel.kind === 'dm' ? u.display : `${u.display} ${mentioned ? 'منشنك' : ''} في #${f?.channel.name || ''}`, {
       body: msg.text.length > 140 ? msg.text.slice(0, 140) + '…' : msg.text,
       tag: msg.channel,
       icon: '/icon-192.png',
       lang: 'ar', dir: 'rtl',
     });
-    n.onclick = () => { focus(); if (f) { S.cur.server = f.server.id; selectChannel(f.channel.id); } n.close(); };
+    n.onclick = () => { focus(); openChannel(msg.channel); n.close(); };
   } catch { /* بعض الجوالات ما تدعم الإشعار من الصفحة */ }
 }
 
@@ -2004,9 +2090,8 @@ for (const ev of ['pointerdown', 'keydown']) {
 }
 
 // نفتح روم أو قروب (من إشعار أو رابط)
-function openTarget({ channel, server }) {
-  const f = channel && findChannel(channel);
-  if (f) { S.cur.server = f.server.id; selectChannel(f.channel.id); return; }
+function openTarget({ channel, server, dm }) {
+  if ((channel || dm) && openChannel(channel || dm)) return;
   if (server && S.servers.has(server)) selectServer(server);
 }
 
@@ -2048,6 +2133,7 @@ function notifLine(n) {
   if (n.kind === 'mention') return `<span>${who} منشنك في <b>#${esc(f?.channel.name || '')}</b></span><q>${esc(n.text)}</q>`;
   if (n.kind === 'join') return `<span>${who} دخل قروبك <b>${esc(server?.name || n.text)}</b></span>`;
   if (n.kind === 'live') return `<span>${who} بث شاشته في <b>${esc(f?.channel.name || n.text)}</b></span>`;
+  if (n.kind === 'report') return `<span>${who} بلّغ عن رسالة في <b>#${esc(f?.channel.name || '')}</b></span><q>${esc(n.text)}</q>`;
   return `<span>${esc(n.text)}</span>`;
 }
 function fillBell(pop) {
@@ -2071,6 +2157,7 @@ $('#bellBtn').addEventListener('click', () => {
       if (!n) return;
       if (!n.read) send({ t: 'notif.read', id: n.id });
       closePop();
+      if (n.kind === 'report' && S.servers.has(n.serverId)) { selectServer(n.serverId); openReports(n.serverId); return; }
       if (n.channelId && findChannel(n.channelId)) openTarget({ channel: n.channelId });
       else if (S.servers.has(n.serverId)) openTarget({ server: n.serverId });
       else toast('هالروم أو القروب انحذف', 'err');
@@ -2233,3 +2320,304 @@ navigator.serviceWorker?.addEventListener('message', (e) => {
   const q = new URL(e.data.url, location.origin).searchParams;
   openTarget({ channel: q.get('channel'), server: q.get('server') });
 });
+
+/* =====================================================
+   الصور في الشات
+   ===================================================== */
+const MAX_PHOTO_SIDE = 1600;
+// نصغّر الصورة (ونعدّل اتجاهها) قبل الرفع، عشان تكون خفيفة وسريعة
+async function shrinkPhoto(file) {
+  if (!file || !file.type.startsWith('image/')) throw new Error('bad_image');
+  if (file.size > 40 * 1024 * 1024) throw new Error('image_too_big');
+  let bmp;
+  try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch { throw new Error('bad_image'); }
+  let scale = Math.min(1, MAX_PHOTO_SIDE / Math.max(bmp.width, bmp.height));
+  for (let i = 0; i < 4; i++) {
+    const w = Math.max(1, Math.round(bmp.width * scale)), h = Math.max(1, Math.round(bmp.height * scale));
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const g = c.getContext('2d');
+    g.imageSmoothingQuality = 'high';
+    g.drawImage(bmp, 0, 0, w, h);
+    let data = c.toDataURL('image/webp', 0.82);
+    if (!data.startsWith('data:image/webp')) data = c.toDataURL('image/jpeg', 0.85);
+    // لو للحين كبيرة نصغّرها أكثر
+    if (data.length * 0.75 < 1.4 * 1024 * 1024) { bmp.close?.(); return { data, w, h }; }
+    scale *= 0.75;
+  }
+  bmp.close?.();
+  throw new Error('image_too_big');
+}
+
+function photoHtml(f, localSrc) {
+  const src = localSrc || (f.id ? `/api/file/${encodeURIComponent(f.id)}` : '');
+  const w = Math.min(f.w, 320);
+  return `<button type="button" class="msg-photo" data-photo="${esc(src)}" style="width:${w}px; aspect-ratio:${f.w} / ${f.h}" aria-label="افتح الصورة">
+    ${src ? `<img src="${esc(src)}" alt="صورة" loading="lazy" decoding="async">` : ''}
+  </button>`;
+}
+
+async function setAttach(file) {
+  if (!S.cur.channel || !isChat(S.cur.channel)) return;
+  try {
+    S.attach = await shrinkPhoto(file);
+    $('#attachPreview img').src = S.attach.data;
+    $('#attachPreview').classList.remove('hidden');
+    $('#msgInput').focus();
+  } catch (err) {
+    toast(ERRORS[err.message] || ERRORS.bad_image, 'err');
+  }
+}
+function clearAttach() {
+  S.attach = null;
+  $('#attachPreview').classList.add('hidden');
+  $('#attachPreview img').removeAttribute('src');
+  $('#fileGallery').value = '';
+  $('#fileCamera').value = '';
+}
+$('#attachClear').addEventListener('click', clearAttach);
+for (const id of ['#fileGallery', '#fileCamera']) $(id).addEventListener('change', (e) => setAttach(e.target.files[0]));
+
+// زر الصورة: في الجوال تختار تصوّر أو من الألبوم، وفي الكمبيوتر يفتح الملفات على طول
+$('#attachBtn').addEventListener('click', () => {
+  if (!matchMedia('(pointer: coarse)').matches) { $('#fileGallery').click(); return; }
+  openPop($('#attachBtn'), `
+    <button type="button" class="pop-opt" data-pick="camera"><b>${I.camera} صوّر</b><small>افتح الكاميرا والتقط صورة</small></button>
+    <button type="button" class="pop-opt" data-pick="gallery"><b>${I.image} من الألبوم</b><small>اختر صورة من جوالك</small></button>`, (pop) => {
+    pop.onclick = (e) => {
+      const b = e.target.closest('[data-pick]');
+      if (!b) return;
+      closePop();
+      $(b.dataset.pick === 'camera' ? '#fileCamera' : '#fileGallery').click();
+    };
+  });
+});
+// لصق صورة (Ctrl+V) أو سحبها وإفلاتها على الشات
+$('#msgInput').addEventListener('paste', (e) => {
+  const item = [...(e.clipboardData?.items || [])].find((x) => x.type.startsWith('image/'));
+  if (item) { e.preventDefault(); setAttach(item.getAsFile()); }
+});
+$('#textView').addEventListener('dragover', (e) => { if ([...e.dataTransfer.types].includes('Files')) { e.preventDefault(); $('#textView').classList.add('drop'); } });
+$('#textView').addEventListener('dragleave', (e) => { if (!e.relatedTarget || !$('#textView').contains(e.relatedTarget)) $('#textView').classList.remove('drop'); });
+$('#textView').addEventListener('drop', (e) => {
+  $('#textView').classList.remove('drop');
+  const file = [...e.dataTransfer.files].find((f) => f.type.startsWith('image/'));
+  if (file) { e.preventDefault(); setAttach(file); }
+});
+
+/* ---- عرض الصورة كاملة ---- */
+function openViewer(src) {
+  $('#viewerImg').src = src;
+  $('#viewerOpen').href = src;
+  $('#viewer').classList.remove('hidden');
+  $('#viewerClose').focus();
+}
+function closeViewer() {
+  $('#viewer').classList.add('hidden');
+  $('#viewerImg').removeAttribute('src');
+}
+$('#viewerClose').addEventListener('click', closeViewer);
+$('#viewer').addEventListener('click', (e) => { if (e.target.id === 'viewer') closeViewer(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#viewer').classList.contains('hidden')) closeViewer(); });
+
+/* =====================================================
+   خيارات الرسالة: نسخ، حذف، بلاغ، حظر
+   ===================================================== */
+function msgById(id) {
+  return chanStore(S.cur.channel).list.find((x) => x.id === id);
+}
+function openMsgMenu(anchor, id) {
+  const m = msgById(id);
+  if (!m || m.pending) return;
+  const f = findChannel(m.channel);
+  const mine = m.uid === S.me.id;
+  const canDelete = mine || (f?.server && f.server.owner === S.me.id);
+  const isDm = f?.channel.kind === 'dm';
+  const opts = [];
+  if (m.text) opts.push(['copy', I.copy, 'انسخ النص']);
+  if (canDelete) opts.push(['delete', I.trash, 'احذف الرسالة', 'danger']);
+  if (!mine) opts.push(['report', I.flag, 'بلّغ عن الرسالة', 'danger']);
+  if (!mine && isDm) opts.push(['block', I.ban, S.blocks.has(m.uid) ? 'فك الحظر' : `احظر ${userOf(m.uid).display}`, 'danger']);
+  openPop(anchor, opts.map(([a, icon, label, cls]) => `<button type="button" class="pop-opt row${cls ? ' ' + cls : ''}" data-msg-act="${a}">${icon}<b>${esc(label)}</b></button>`).join(''), (pop) => {
+    pop.onclick = async (e) => {
+      const b = e.target.closest('[data-msg-act]');
+      if (!b) return;
+      closePop();
+      switch (b.dataset.msgAct) {
+        case 'copy':
+          try { await navigator.clipboard.writeText(m.text); toast('انسخ النص ✅', 'ok'); } catch { toast('ما قدرنا ننسخ', 'err'); }
+          break;
+        case 'delete':
+          if (await confirmBox('تحذف الرسالة؟', mine ? 'بتنحذف عند الكل.' : 'بتنحذف عند الكل، لأنك صاحب القروب.', 'احذف')) send({ t: 'msg.delete', id: m.id });
+          break;
+        case 'report': openReport(m); break;
+        case 'block': setBlock(m.uid, !S.blocks.has(m.uid)); break;
+      }
+    };
+  });
+}
+$('#messages').addEventListener('click', (e) => {
+  const more = e.target.closest('.msg-more');
+  if (more) { openMsgMenu(more, more.closest('[data-msg]').dataset.msg); return; }
+  const photo = e.target.closest('[data-photo]');
+  if (photo?.dataset.photo) openViewer(photo.dataset.photo);
+});
+// في الجوال: اضغط مطوّل على الرسالة.
+// الأندرويد يرسل حدث "contextmenu" للضغط المطوّل، والآيفون ما يرسله فنحسب الوقت بنفسنا
+let pressTimer = null, pressOpenedAt = 0;
+const openFromPress = (row) => {
+  if (Date.now() - pressOpenedAt < 800) return;
+  pressOpenedAt = Date.now();
+  navigator.vibrate?.(15);
+  openMsgMenu(row, row.dataset.msg);
+};
+$('#messages').addEventListener('touchstart', (e) => {
+  const row = e.target.closest('[data-msg]');
+  if (!row || e.touches.length > 1 || e.target.closest('a, .msg-photo, .msg-more')) return;
+  const t0 = e.touches[0], start = { x: t0.clientX, y: t0.clientY };
+  clearTimeout(pressTimer);
+  pressTimer = setTimeout(() => openFromPress(row), 500);
+  const stop = (ev) => {
+    const t = ev.touches?.[0];
+    if (ev.type === 'touchmove' && t && Math.hypot(t.clientX - start.x, t.clientY - start.y) < 10) return;
+    clearTimeout(pressTimer);
+    row.removeEventListener('touchmove', stop); row.removeEventListener('touchend', stop); row.removeEventListener('touchcancel', stop);
+  };
+  row.addEventListener('touchmove', stop, { passive: true });
+  row.addEventListener('touchend', stop);
+  row.addEventListener('touchcancel', stop);
+}, { passive: true });
+$('#messages').addEventListener('contextmenu', (e) => {
+  const row = e.target.closest('[data-msg]');
+  if (!row || !matchMedia('(pointer: coarse)').matches || e.target.closest('a, .msg-photo')) return;
+  e.preventDefault();
+  clearTimeout(pressTimer);
+  openFromPress(row);
+});
+
+/* ---- البلاغ ---- */
+let reporting = null;
+function openReport(m) {
+  reporting = m;
+  const f = findChannel(m.channel);
+  const isDm = f?.channel.kind === 'dm';
+  const form = $('#reportForm');
+  form.reset();
+  $('#reportQuote').textContent = m.text || '📷 صورة';
+  $('#reportBlockRow').classList.toggle('hidden', !isDm);
+  $('#reportWho').textContent = isDm
+    ? 'البلاغ ينحفظ عندنا. والحظر يمنعه يرسل لك.'
+    : `البلاغ يوصل لصاحب القروب (${userOf(f?.server?.owner).display}) وهو يقرر وش يسوي. ما أحد يدري إنك انت اللي بلّغت غيره.`;
+  openModal('#reportModal');
+}
+$('#reportForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.target, m = reporting;
+  if (!m) return;
+  await busy($('button[type=submit]', f), 'جاري الإرسال…', async () => {
+    try {
+      await request({ t: 'report', messageId: m.id, reason: f.reason.value, note: f.note.value, block: f.block.checked });
+      closeModals();
+      const isDm = findChannel(m.channel)?.channel.kind === 'dm';
+      toast(isDm ? (f.block.checked ? 'وصل بلاغك، وحظرناه عنك' : 'وصل بلاغك') : 'وصل بلاغك لصاحب القروب. شكراً إنك تساعد', 'ok');
+    } catch (err) { toast(ERRORS[err.message] || ERRORS.network, 'err'); }
+  });
+});
+
+async function setBlock(uid, on) {
+  try {
+    await request({ t: 'block', userId: uid, on });
+    toast(on ? `حظرت ${userOf(uid).display}. ما يقدر يرسل لك` : `فكّيت الحظر عن ${userOf(uid).display}`, 'ok');
+  } catch (err) { toast(ERRORS[err.message] || ERRORS.network, 'err'); }
+}
+$('#unblockBtn').addEventListener('click', () => {
+  const dm = S.dms.get(S.cur.channel);
+  if (dm) setBlock(dm.other.id, false);
+});
+
+/* ---- بلاغات القروب (لصاحبه) ---- */
+const REASON_LABEL = { spam: 'سبام', abuse: 'إزعاج أو تنمّر', nsfw: 'محتوى غير لائق', other: 'سبب ثاني' };
+function renderReportCount() {
+  const n = S.reportCounts[S.cur.server] || 0;
+  const el = $('#reportCount');
+  el.textContent = n;
+  el.classList.toggle('hidden', !n);
+  $('#serverHeadBtn').classList.toggle('has-reports', !!n && !!isOwner());
+}
+let reportsServer = null;
+async function openReports(serverId) {
+  reportsServer = serverId;
+  $('#reportsList').innerHTML = '<div class="loading-msgs"><i></i><i></i><i></i></div>';
+  openModal('#reportsModal');
+  try { fillReports(serverId, await request({ t: 'reports.list', serverId })); }
+  catch (err) { $('#reportsList').innerHTML = `<p class="hint warn">${esc(ERRORS[err.message] || ERRORS.network)}</p>`; }
+}
+function fillReports(serverId, list) {
+  if (serverId !== reportsServer) return;
+  $('#reportsList').innerHTML = list.length ? list.map((r) => `
+    <div class="report-card">
+      <div class="rc-head">${avatar(r.author || { display: '؟' }, 'sm')}<div><b>${esc(r.author?.display || 'حساب محذوف')}</b><small>في #${esc(r.channel || '')} · ${timeLabel(r.ts)}</small></div>
+        <span class="rc-reason">${esc(REASON_LABEL[r.reason] || r.reason)}</span></div>
+      ${r.text ? `<blockquote class="report-quote">${esc(r.text)}</blockquote>` : ''}
+      ${r.file ? photoHtml(r.file) : ''}
+      <p class="hint">بلّغ عنها ${esc(r.reporter?.display || '؟')}${r.note ? `: «${esc(r.note)}»` : ''}</p>
+      <div class="rc-actions">
+        <button type="button" class="btn btn-soft btn-sm" data-resolve="dismiss" data-id="${esc(r.id)}">تجاهل</button>
+        <button type="button" class="btn btn-danger-soft btn-sm" data-resolve="delete" data-id="${esc(r.id)}">احذف الرسالة</button>
+        ${r.author && r.author.id !== S.me.id ? `<button type="button" class="btn btn-danger btn-sm" data-resolve="ban" data-id="${esc(r.id)}">احذفها واطرده</button>` : ''}
+      </div>
+    </div>`).join('') : '<p class="bell-empty">ما فيه بلاغات مفتوحة 👍</p>';
+}
+$('#reportsList').addEventListener('click', async (e) => {
+  const photo = e.target.closest('[data-photo]');
+  if (photo?.dataset.photo) { openViewer(photo.dataset.photo); return; }
+  const b = e.target.closest('[data-resolve]');
+  if (!b) return;
+  if (b.dataset.resolve === 'ban' && !await confirmBox('تطرده من القروب؟', 'بتنحذف رسالته، ويطلع من القروب وما يقدر يرجع حتى برابط الدعوة.', 'اطرده')) { openModal('#reportsModal'); return; }
+  const id = b.dataset.id;
+  if (!$('#reportsModal').classList.contains('hidden') || b.dataset.resolve === 'ban') {
+    try {
+      const list = await request({ t: 'report.resolve', id, action: b.dataset.resolve });
+      if ($('#reportsModal').classList.contains('hidden')) openModal('#reportsModal');
+      fillReports(reportsServer, list);
+      toast({ dismiss: 'تجاهلنا البلاغ', delete: 'انحذفت الرسالة', ban: 'انحذفت الرسالة وانطرد من القروب' }[b.dataset.resolve], 'ok');
+    } catch (err) { toast(ERRORS[err.message] || ERRORS.network, 'err'); }
+  }
+});
+
+/* =====================================================
+   الرسائل الخاصة
+   ===================================================== */
+function openDmModal() {
+  const known = new Map();
+  for (const s of S.servers.values()) for (const u of s.members.values()) if (u.id !== S.me.id) known.set(u.id, u);
+  const people = [...known.values()].sort((a, b) => Number(S.online.has(b.id)) - Number(S.online.has(a.id)) || a.display.localeCompare(b.display, 'ar'));
+  $('#dmForm').reset();
+  $('#dmPeople').innerHTML = people.length
+    ? `<div class="mb-title">ناس من قروباتك</div>` + people.map((u) => `
+      <button type="button" class="mb-item" data-dm-user="${esc(u.id)}">${avatar(u, 'xs')}<b>${esc(u.display)}</b>${S.online.has(u.id) ? '<i class="dot on"></i>' : ''}<small dir="ltr">@${esc(u.username)}</small></button>`).join('')
+    : '<p class="hint">اكتب اسم المستخدم حق الشخص اللي تبي تراسله.</p>';
+  openModal('#dmModal');
+}
+async function startDm(query) {
+  try {
+    const dm = await request({ t: 'dm.open', ...query });
+    closeModals();
+    S.dms.set(dm.id, { ...S.dms.get(dm.id), ...dm });
+    S.users.set(dm.other.id, dm.other);
+    S.cur.server = null;
+    selectChannel(dm.id);
+  } catch (err) { toast(ERRORS[err.message] || ERRORS.network, 'err'); }
+}
+$('#dmForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const name = e.target.username.value.trim();
+  if (!name) { toast('اكتب اسم المستخدم', 'err'); return; }
+  busy($('button[type=submit]', e.target), 'جاري البحث…', () => startDm({ username: name }));
+});
+$('#dmPeople').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-dm-user]');
+  if (b) startDm({ userId: b.dataset.dmUser });
+});
+$('#channelList').addEventListener('click', (e) => { if (e.target.closest('[data-new-dm]')) openDmModal(); }, true);
+$('#emptyDm').addEventListener('click', openDmModal);

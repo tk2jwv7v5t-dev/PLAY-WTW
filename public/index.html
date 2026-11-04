@@ -111,6 +111,7 @@
         <div id="serverMenu" class="menu hidden" role="menu">
           <button type="button" data-act="invite"><span data-icon="userPlus"></span>دعوة أصحابك</button>
           <button type="button" data-act="notify"><span data-icon="bell"></span>إشعارات القروب</button>
+          <button type="button" data-act="reports" class="owner-only"><span data-icon="flag"></span>البلاغات <b id="reportCount" class="menu-count hidden"></b></button>
           <button type="button" data-act="newText" class="owner-only"><span data-icon="hash"></span>روم كتابي جديد</button>
           <button type="button" data-act="newVoice" class="owner-only"><span data-icon="volume"></span>روم صوتي جديد</button>
           <button type="button" data-act="rename" class="owner-only"><span data-icon="edit"></span>تعديل القروب</button>
@@ -165,6 +166,7 @@
           <div class="empty-actions">
             <button id="emptyCreate" class="btn btn-primary" type="button">سوّ قروب</button>
             <button id="emptyJoin" class="btn btn-soft" type="button">ادخل بكود دعوة</button>
+            <button id="emptyDm" class="btn btn-soft" type="button">رسالة خاصة</button>
           </div>
         </div>
       </section>
@@ -173,9 +175,21 @@
         <div id="messages" class="messages" aria-live="polite"></div>
         <div id="typing" class="typing"></div>
         <div id="mentionBox" class="mention-box hidden" role="listbox" aria-label="اختر الشخص اللي تبي تنشنه"></div>
+        <div id="blockedBar" class="blocked-bar hidden">
+          <span>حظرت هالشخص، فما تقدر تراسله.</span>
+          <button id="unblockBtn" class="btn btn-soft btn-sm" type="button">فك الحظر</button>
+        </div>
+        <div id="attachPreview" class="attach-preview hidden">
+          <img alt="الصورة اللي بترسلها">
+          <span class="ap-text">صورة جاهزة للإرسال. تقدر تكتب معها رسالة.</span>
+          <button id="attachClear" class="icon-btn ghost sm" type="button" title="شيل الصورة" data-icon="x"></button>
+        </div>
         <form id="composer" class="composer">
+          <button id="attachBtn" class="icon-btn ghost" type="button" title="ارسل صورة" data-pop data-icon="image"></button>
           <textarea id="msgInput" class="composer-input" rows="1" maxlength="2000" placeholder="اكتب رسالة…"></textarea>
           <button class="icon-btn accent" type="submit" aria-label="ارسال" data-icon="send"></button>
+          <input id="fileGallery" type="file" accept="image/*" hidden>
+          <input id="fileCamera" type="file" accept="image/*" capture="environment" hidden>
         </form>
       </section>
 
@@ -538,6 +552,53 @@
         <p class="muted">تواصل معنا واشرح المشكلة، ويفضّل ترسل صورة للشاشة.</p>
         <div id="contactLinks" class="contact-links"></div>
       </div>
+    </div>
+  </div>
+
+  <div id="reportModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="reportTitle">
+    <form id="reportForm" class="modal-card narrow">
+      <div class="modal-head"><h3 id="reportTitle">بلّغ عن الرسالة</h3><button type="button" class="icon-btn ghost sm" data-close aria-label="سكّر" data-icon="x"></button></div>
+      <blockquote id="reportQuote" class="report-quote"></blockquote>
+      <div class="field">
+        <span class="label">وش المشكلة؟</span>
+        <div class="kind-pick">
+          <label><input type="radio" name="reason" value="spam" checked><span><b>سبام</b><small>رسايل مكررة أو إعلانات</small></span></label>
+          <label><input type="radio" name="reason" value="abuse"><span><b>إزعاج أو تنمّر</b><small>سب، تهديد، أو مضايقة</small></span></label>
+          <label><input type="radio" name="reason" value="nsfw"><span><b>محتوى غير لائق</b><small>صور أو كلام ما يناسب</small></span></label>
+          <label><input type="radio" name="reason" value="other"><span><b>سبب ثاني</b><small>اكتبه تحت</small></span></label>
+        </div>
+      </div>
+      <label class="field"><span class="label">تفاصيل <small>(اختياري)</small></span><textarea name="note" class="input" rows="2" maxlength="300"></textarea></label>
+      <label id="reportBlockRow" class="switch hidden"><input type="checkbox" name="block" checked><i></i><span>واحظره عشان ما يرسل لي</span></label>
+      <p id="reportWho" class="hint"></p>
+      <div class="modal-foot"><button type="button" class="btn btn-soft" data-close>إلغاء</button><button class="btn btn-danger" type="submit">ارسل البلاغ</button></div>
+    </form>
+  </div>
+
+  <div id="reportsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="reportsTitle">
+    <div class="modal-card wide">
+      <div class="modal-head"><h3 id="reportsTitle">البلاغات</h3><button type="button" class="icon-btn ghost sm" data-close aria-label="سكّر" data-icon="x"></button></div>
+      <p class="muted">رسايل بلّغ عنها أعضاء القروب. انت تقرر: تحذف الرسالة، أو تحذفها وتطرد صاحبها، أو تتجاهل البلاغ.</p>
+      <div id="reportsList" class="reports-list"></div>
+    </div>
+  </div>
+
+  <div id="dmModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="dmTitle">
+    <div class="modal-card narrow">
+      <div class="modal-head"><h3 id="dmTitle">رسالة خاصة جديدة</h3><button type="button" class="icon-btn ghost sm" data-close aria-label="سكّر" data-icon="x"></button></div>
+      <form id="dmForm" class="row">
+        <input name="username" class="input" dir="ltr" placeholder="اسم المستخدم" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="21">
+        <button class="btn btn-primary" type="submit">ابدأ</button>
+      </form>
+      <div id="dmPeople" class="dm-people"></div>
+    </div>
+  </div>
+
+  <div id="viewer" class="viewer hidden" role="dialog" aria-modal="true" aria-label="عرض الصورة">
+    <img id="viewerImg" alt="">
+    <div class="viewer-bar">
+      <a id="viewerOpen" class="btn btn-soft btn-sm" target="_blank" rel="noopener">افتحها كاملة</a>
+      <button id="viewerClose" class="btn btn-primary btn-sm" type="button">سكّر</button>
     </div>
   </div>
 

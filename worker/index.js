@@ -26,6 +26,8 @@ const NOTIFY_LEVELS = ['all', 'mentions', 'none'];
 const MAX_NOTIFS = 100;       // نحتفظ بآخر 100 إشعار لكل شخص
 const MAX_PUSH_DEVICES = 10;  // أجهزة الإشعارات لكل حساب
 const snippet = (t, n = 140) => (t.length > n ? Array.from(t).slice(0, n).join('') + '…' : t);
+const MAX_FILE_BYTES = 1536 * 1024;   // الصور تتصغّر في المتصفح قبل الرفع، فهذا حد احتياطي
+const REPORT_REASONS = { spam: 'سبام', abuse: 'إزعاج أو تنمّر', nsfw: 'محتوى غير لائق', other: 'سبب ثاني' };
 
 // نتأكد إن الملف صورة فعلاً من أول بايتات فيه، مو من اسمه
 function imageType(b) {
@@ -141,7 +143,23 @@ export class Hub extends DurableObject {
         id TEXT PRIMARY KEY, user_id TEXT NOT NULL, kind TEXT NOT NULL, server_id TEXT, channel_id TEXT,
         actor_id TEXT, text TEXT NOT NULL, ts INTEGER NOT NULL, read INTEGER NOT NULL DEFAULT 0);
       CREATE INDEX IF NOT EXISTS notifs_user ON notifs (user_id, ts);
+      CREATE TABLE IF NOT EXISTS files (
+        id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, scope_id TEXT NOT NULL, data BLOB NOT NULL, type TEXT NOT NULL,
+        w INTEGER NOT NULL, h INTEGER NOT NULL, ts INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0);
+      CREATE INDEX IF NOT EXISTS files_scope ON files (scope_id);
+      CREATE TABLE IF NOT EXISTS dms (
+        id TEXT PRIMARY KEY, a TEXT NOT NULL, b TEXT NOT NULL, created INTEGER NOT NULL, last INTEGER, UNIQUE (a, b));
+      CREATE INDEX IF NOT EXISTS dms_b ON dms (b);
+      CREATE TABLE IF NOT EXISTS blocks (blocker TEXT NOT NULL, blocked TEXT NOT NULL, PRIMARY KEY (blocker, blocked));
+      CREATE TABLE IF NOT EXISTS bans (server_id TEXT NOT NULL, user_id TEXT NOT NULL, PRIMARY KEY (server_id, user_id));
+      CREATE TABLE IF NOT EXISTS reports (
+        id TEXT PRIMARY KEY, reporter_id TEXT NOT NULL, message_id TEXT NOT NULL, channel_id TEXT NOT NULL, server_id TEXT,
+        author_id TEXT NOT NULL, reason TEXT NOT NULL, note TEXT NOT NULL, status TEXT NOT NULL, ts INTEGER NOT NULL,
+        UNIQUE (reporter_id, message_id));
+      CREATE INDEX IF NOT EXISTS reports_server ON reports (server_id, status);
     `);
+    // عمود الصورة للرسايل (للقواعد القديمة)
+    try { this.sql.exec('ALTER TABLE messages ADD COLUMN file_id TEXT'); } catch { /* موجود */ }
   }
 
   /* ---------- HTTP ---------- */
@@ -161,6 +179,8 @@ export class Hub extends DurableObject {
       }
       const icon = url.pathname.match(/^\/api\/icon\/([\w-]{1,64})$/);
       if (icon && req.method === 'GET') return this.getIcon(req, icon[1]);
+      const file = url.pathname.match(/^\/api\/file\/([\w-]{1,64})$/);
+      if (file && req.method === 'GET') return this.getFile(req, file[1]);
       if (route === 'GET /api/me') {
         const user = await this.authed(req);
         return user ? json({ user: this.publicUser(user) }) : fail('unauthorized', 401);
@@ -176,6 +196,7 @@ export class Hub extends DurableObject {
         if (route === 'POST /api/password') return this.changePassword(req);
         if (route === 'POST /api/account/delete') return this.deleteAccount(req);
         if (icon) return this.setIcon(req, icon[1]);
+        if (route === 'POST /api/upload') return this.upload(req);
         if (route === 'POST /api/push/subscribe') return this.pushSubscribe(req);
         if (route === 'POST /api/push/unsubscribe') return this.pushUnsubscribe(req);
         if (route === 'POST /api/push/test') return this.pushTest(req);
@@ -299,6 +320,16 @@ export class Hub extends DurableObject {
     this.sql.exec('DELETE FROM push_subs WHERE user_id = ?', user.id);
     this.sql.exec('DELETE FROM notify_prefs WHERE user_id = ?', user.id);
     this.sql.exec('DELETE FROM notifs WHERE user_id = ? OR actor_id = ?', user.id, user.id);
+    const dmIds = this.sql.exec('SELECT id FROM dms WHERE a = ? OR b = ?', user.id, user.id).toArray().map((r) => r.id);
+    for (const dm of dmIds) {
+      this.sql.exec('DELETE FROM messages WHERE channel_id = ?', dm);
+      this.sql.exec('DELETE FROM files WHERE scope_id = ?', dm);
+      this.sql.exec('DELETE FROM dms WHERE id = ?', dm);
+    }
+    this.sql.exec('DELETE FROM files WHERE owner_id = ?', user.id);
+    this.sql.exec('DELETE FROM blocks WHERE blocker = ? OR blocked = ?', user.id, user.id);
+    this.sql.exec('DELETE FROM reports WHERE reporter_id = ? OR author_id = ?', user.id, user.id);
+    this.sql.exec('DELETE FROM bans WHERE user_id = ?', user.id);
     this.sql.exec('DELETE FROM users WHERE id = ?', user.id);
     for (const s of this.sockets()) if (s.att.uid === user.id) { try { s.ws.close(4001, 'deleted'); } catch { /* تسكر */ } }
     return json({ ok: true }, 200, { 'set-cookie': sessionCookie(req, '', 0) });
@@ -357,6 +388,126 @@ export class Hub extends DurableObject {
       console.error('turn', e);
       return STUN_ONLY;
     }
+  }
+
+  /* ---------- الرومات والرسايل الخاصة ---------- */
+  // وين تنكتب الرسالة: روم كتابي في قروب أنت عضو فيه، أو محادثة خاصة أنت طرف فيها. غيرها: null
+  room(channelId, uid) {
+    if (!channelId) return null;
+    const ch = this.channel(channelId);
+    if (ch) return ch.kind === 'text' && this.isMember(ch.server_id, uid) ? { kind: 'text', id: ch.id, serverId: ch.server_id, ch } : null;
+    const dm = this.sql.exec('SELECT * FROM dms WHERE id = ?', channelId).toArray()[0];
+    if (dm && (dm.a === uid || dm.b === uid)) return { kind: 'dm', id: dm.id, dm, other: dm.a === uid ? dm.b : dm.a };
+    return null;
+  }
+  toRoom(r, msg) {
+    if (r.kind === 'dm') { this.toUser(r.dm.a, msg); this.toUser(r.dm.b, msg); } else this.toServer(r.serverId, msg);
+  }
+  dmPayload(dm, me) {
+    const other = this.sql.exec('SELECT * FROM users WHERE id = ?', dm.a === me ? dm.b : dm.a).toArray()[0];
+    return { id: dm.id, other: other ? this.publicUser(other) : null, last: dm.last };
+  }
+  isBlocked(a, b) {
+    return this.sql.exec('SELECT 1 FROM blocks WHERE (blocker = ? AND blocked = ?) OR (blocker = ? AND blocked = ?)', a, b, b, a).toArray().length > 0;
+  }
+  blockList(uid) {
+    return this.sql.exec('SELECT blocked FROM blocks WHERE blocker = ?', uid).toArray().map((r) => r.blocked);
+  }
+  deleteMessage(row, r) {
+    this.sql.exec('DELETE FROM messages WHERE id = ?', row.id);
+    if (row.file_id) this.sql.exec('DELETE FROM files WHERE id = ?', row.file_id);
+    this.sql.exec("UPDATE reports SET status = 'resolved' WHERE message_id = ? AND status = 'open'", row.id);
+    if (r) this.toRoom(r, { t: 'msg.remove', channel: row.channel_id, id: row.id });
+    if (r?.serverId) this.sendReportCount(r.serverId);
+  }
+  // نطرد العضو من القروب ونمنعه يرجع
+  banMember(serverId, uid) {
+    this.sql.exec('INSERT OR IGNORE INTO bans (server_id, user_id) VALUES (?, ?)', serverId, uid);
+    if (!this.isMember(serverId, uid)) return;
+    this.kickFromVoice(serverId, uid);
+    this.sql.exec('DELETE FROM members WHERE server_id = ? AND user_id = ?', serverId, uid);
+    this.sql.exec('DELETE FROM notify_prefs WHERE server_id = ? AND user_id = ?', serverId, uid);
+    this.toUser(uid, { t: 'server.remove', serverId, banned: true });
+    this.toServer(serverId, { t: 'member.remove', serverId, uid });
+  }
+  openReports(serverId) {
+    return this.sql.exec("SELECT COUNT(*) AS n FROM reports WHERE server_id = ? AND status = 'open'", serverId).one().n;
+  }
+  sendReportCount(serverId) {
+    const owner = this.sql.exec('SELECT owner_id FROM servers WHERE id = ?', serverId).toArray()[0]?.owner_id;
+    if (owner) this.toUser(owner, { t: 'reports.count', serverId, n: this.openReports(serverId) });
+  }
+  reportList(serverId) {
+    return this.sql.exec(
+      `SELECT r.id, r.reason, r.note, r.ts, r.message_id, r.channel_id, c.name AS channel,
+              m.text, m.file_id, f.w, f.h,
+              a.id AS aid, a.username AS auser, a.display AS adisp, a.hue AS ahue,
+              p.id AS pid, p.username AS puser, p.display AS pdisp, p.hue AS phue
+       FROM reports r
+       LEFT JOIN messages m ON m.id = r.message_id LEFT JOIN files f ON f.id = m.file_id
+       LEFT JOIN channels c ON c.id = r.channel_id
+       LEFT JOIN users a ON a.id = r.author_id LEFT JOIN users p ON p.id = r.reporter_id
+       WHERE r.server_id = ? AND r.status = 'open' ORDER BY r.ts DESC LIMIT 50`, serverId,
+    ).toArray().map((x) => ({
+      id: x.id, reason: x.reason, note: x.note, ts: x.ts, messageId: x.message_id, channel: x.channel,
+      text: x.text, file: x.file_id ? { id: x.file_id, w: x.w, h: x.h } : null,
+      author: x.aid ? { id: x.aid, username: x.auser, display: x.adisp, hue: x.ahue } : null,
+      reporter: x.pid ? { id: x.pid, username: x.puser, display: x.pdisp, hue: x.phue } : null,
+    }));
+  }
+
+  // رسالة خاصة: إشعار للجهاز (ما تحتاج الجرس، عندها عدّاد على زر الرسايل الخاصة)
+  notifyDM(r, author, msg) {
+    if (this.isBlocked(author.id, r.other)) return;
+    this.pushTo(r.other, { title: author.display, body: snippet(msg.text), tag: `dm:${r.id}`, url: `/?dm=${r.id}`, urgent: true });
+  }
+
+  /* ---------- الصور ---------- */
+  // { scope: روم أو محادثة، image: "data:image/webp;base64,...", w, h }
+  async upload(req) {
+    const user = await this.authed(req);
+    if (!user) return fail('unauthorized', 401);
+    const b = await this.body(req);
+    const r = this.room(asId(b.scope), user.id);
+    if (!r) return fail('forbidden', 403);
+    if (r.kind === 'dm' && this.isBlocked(r.dm.a, r.dm.b)) return fail('blocked', 403);
+    // حد: 15 صورة كل دقيقة لكل شخص
+    this.uploads ??= new Map();
+    const now = Date.now();
+    const recent = (this.uploads.get(user.id) || []).filter((t) => now - t < 60000);
+    if (recent.length >= 15) return fail('slow_down', 429);
+    const m = String(b.image || '').match(/^data:image\/[a-z]+;base64,([A-Za-z0-9+/=]+)$/);
+    if (!m) return fail('bad_image');
+    let bytes;
+    try { bytes = unb64(m[1]); } catch { return fail('bad_image'); }
+    if (bytes.byteLength > MAX_FILE_BYTES) return fail('image_too_big');
+    const type = imageType(bytes);
+    if (!type) return fail('bad_image');
+    const w = Math.max(1, Math.min(10000, Math.round(Number(b.w) || 1)));
+    const h = Math.max(1, Math.min(10000, Math.round(Number(b.h) || 1)));
+    recent.push(now);
+    this.uploads.set(user.id, recent);
+    // الصور اللي انرفعت وما انرسلت خلال يوم ننظّفها
+    this.sql.exec('DELETE FROM files WHERE used = 0 AND ts < ?', now - 86400000);
+    const id = newId();
+    this.sql.exec('INSERT INTO files (id, owner_id, scope_id, data, type, w, h, ts, used) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)',
+      id, user.id, r.id, bytes.buffer, type, w, h, now);
+    return json({ id, w, h });
+  }
+
+  async getFile(req, id) {
+    const user = await this.authed(req);
+    const f = user && this.sql.exec('SELECT * FROM files WHERE id = ?', id).toArray()[0];
+    // الصورة تبان بس للي في نفس الروم أو المحادثة
+    if (!f || !this.room(f.scope_id, user.id)) return fail('not_found', 404);
+    return new Response(f.data, {
+      headers: {
+        'content-type': f.type,
+        'cache-control': 'private, max-age=31536000, immutable',
+        'x-content-type-options': 'nosniff',
+        'content-disposition': 'inline',
+      },
+    });
   }
 
   /* ---------- الإشعارات ---------- */
@@ -567,6 +718,9 @@ export class Hub extends DurableObject {
     this.sql.exec('DELETE FROM server_icons WHERE server_id = ?', sid);
     this.sql.exec('DELETE FROM notify_prefs WHERE server_id = ?', sid);
     this.sql.exec('DELETE FROM notifs WHERE server_id = ?', sid);
+    this.sql.exec('DELETE FROM files WHERE scope_id IN (SELECT id FROM channels WHERE server_id = ?)', sid);
+    this.sql.exec('DELETE FROM reports WHERE server_id = ?', sid);
+    this.sql.exec('DELETE FROM bans WHERE server_id = ?', sid);
     this.sql.exec('DELETE FROM servers WHERE id = ?', sid);
   }
 
@@ -650,7 +804,13 @@ export class Hub extends DurableObject {
     const known = new Set(servers.flatMap((s) => s.members.map((u) => u.id)));
     const online = [...new Set(this.sockets().map((s) => s.att.uid))].filter((id) => known.has(id) || id === user.id);
     const prefs = Object.fromEntries(this.sql.exec('SELECT server_id, level FROM notify_prefs WHERE user_id = ?', user.id).toArray().map((r) => [r.server_id, r.level]));
-    return { t: 'ready', me: this.publicUser(user), sid, servers, online, voice: this.voiceStates(channelIds), prefs, notifs: this.notifList(user.id) };
+    const dms = this.sql.exec('SELECT * FROM dms WHERE (a = ? OR b = ?) AND last IS NOT NULL ORDER BY last DESC LIMIT 100', user.id, user.id)
+      .toArray().map((d) => this.dmPayload(d, user.id));
+    const reports = Object.fromEntries(servers.filter((s) => s.owner === user.id).map((s) => [s.id, this.openReports(s.id)]));
+    return {
+      t: 'ready', me: this.publicUser(user), sid, servers, online, voice: this.voiceStates(channelIds), prefs,
+      notifs: this.notifList(user.id), dms, blocks: this.blockList(user.id), reports,
+    };
   }
 
   channel(channelId) {
@@ -712,6 +872,7 @@ export class Hub extends DurableObject {
         if (att.badInvites >= 10 && Date.now() - att.badInviteAt < 600000) return error('too_many_attempts');
         const invite = clean(m.invite, 64).split('/').pop();
         const s = this.sql.exec('SELECT * FROM servers WHERE invite = ?', invite).toArray()[0];
+        if (s && this.sql.exec('SELECT 1 FROM bans WHERE server_id = ? AND user_id = ?', s.id, att.uid).toArray().length) return error('banned');
         if (!s) {
           if (!att.badInviteAt || Date.now() - att.badInviteAt > 600000) att.badInvites = 0;
           att.badInvites++; att.badInviteAt = Date.now();
@@ -776,6 +937,8 @@ export class Hub extends DurableObject {
         for (const s of this.sockets()) if (s.att.voice === ch.id) this.setVoice(s.ws, s.att, null);
         this.sql.exec('DELETE FROM messages WHERE channel_id = ?', ch.id);
         this.sql.exec('DELETE FROM notifs WHERE channel_id = ?', ch.id);
+        this.sql.exec('DELETE FROM files WHERE scope_id = ?', ch.id);
+        this.sql.exec('DELETE FROM reports WHERE channel_id = ?', ch.id);
         this.sql.exec('DELETE FROM channels WHERE id = ?', ch.id);
         this.toServer(ch.server_id, { t: 'channel.remove', serverId: ch.server_id, channelId: ch.id });
         return;
@@ -783,37 +946,144 @@ export class Hub extends DurableObject {
 
       /* ---- الشات ---- */
       case 'msg.send': {
-        const ch = this.channel(m.channelId);
-        if (!ch || ch.kind !== 'text' || !this.isMember(ch.server_id, att.uid)) return error('forbidden');
+        const r = this.room(m.channelId, att.uid);
+        if (!r) return error('forbidden');
+        if (r.kind === 'dm' && this.isBlocked(r.dm.a, r.dm.b)) return error('blocked');
         const text = cleanText(m.text);
-        if (!text) return;
+        let file = null;
+        if (m.fileId) {
+          file = this.sql.exec('SELECT id, w, h FROM files WHERE id = ? AND owner_id = ? AND scope_id = ? AND used = 0',
+            asId(m.fileId), att.uid, r.id).toArray()[0];
+          if (!file) return error('bad_file');
+        }
+        if (!text && !file) return;
         const now = Date.now();
         // حد بسيط ضد السبام: 8 رسايل كل 5 ثواني
         att.burst = (att.burst || []).filter((t) => now - t < 5000);
         if (att.burst.length >= 8) return error('slow_down');
         att.burst.push(now);
         ws.serializeAttachment(att);
-        const msg = { id: newId(), channel: ch.id, uid: att.uid, text, ts: now, mentions: this.findMentions(ch.server_id, text, att.uid) };
-        this.sql.exec('INSERT INTO messages (id, channel_id, user_id, text, ts) VALUES (?, ?, ?, ?, ?)', msg.id, ch.id, att.uid, text, now);
-        this.toServer(ch.server_id, { t: 'msg', msg, nonce: clean(m.nonce, 40) });
-        this.notifyMessage(ch, user, msg);
+        const msg = {
+          id: newId(), channel: r.id, uid: att.uid, text, ts: now,
+          mentions: r.kind === 'text' ? this.findMentions(r.serverId, text, att.uid) : [],
+          file: file ? { id: file.id, w: file.w, h: file.h } : null,
+        };
+        this.sql.exec('INSERT INTO messages (id, channel_id, user_id, text, ts, file_id) VALUES (?, ?, ?, ?, ?, ?)',
+          msg.id, r.id, att.uid, text, now, file?.id || null);
+        if (file) this.sql.exec('UPDATE files SET used = 1 WHERE id = ?', file.id);
+        const preview = { ...msg, text: text || '📷 صورة' };
+        if (r.kind === 'dm') {
+          // أول رسالة: الطرف الثاني يشوف المحادثة عنده
+          if (!r.dm.last) this.toUser(r.other, { t: 'dm.add', dm: this.dmPayload(r.dm, r.other) });
+          this.sql.exec('UPDATE dms SET last = ? WHERE id = ?', now, r.id);
+          this.toRoom(r, { t: 'msg', msg, nonce: clean(m.nonce, 40) });
+          this.notifyDM(r, user, preview);
+        } else {
+          this.toRoom(r, { t: 'msg', msg, nonce: clean(m.nonce, 40) });
+          this.notifyMessage(r.ch, user, preview);
+        }
+        return;
+      }
+      case 'msg.delete': {
+        // صاحب الرسالة، أو صاحب القروب
+        const row = this.sql.exec('SELECT * FROM messages WHERE id = ?', asId(m.id)).toArray()[0];
+        const r = row && this.room(row.channel_id, att.uid);
+        if (!r) return error('not_found');
+        if (row.user_id !== att.uid && !(r.kind === 'text' && this.isOwner(r.serverId, att.uid))) return error('forbidden');
+        this.deleteMessage(row, r);
         return;
       }
       case 'msg.history': {
-        const ch = this.channel(m.channelId);
-        if (!ch || !this.isMember(ch.server_id, att.uid)) return error('forbidden');
+        const r = this.room(m.channelId, att.uid);
+        if (!r) return error('forbidden');
         const before = Number(m.before) || Date.now() + 1;
         const rows = this.sql.exec(
-          'SELECT id, channel_id AS channel, user_id AS uid, text, ts FROM messages WHERE channel_id = ? AND ts < ? ORDER BY ts DESC LIMIT ?',
-          ch.id, before, HISTORY_PAGE + 1).toArray();
+          `SELECT m.id, m.channel_id AS channel, m.user_id AS uid, m.text, m.ts, f.id AS fid, f.w, f.h
+           FROM messages m LEFT JOIN files f ON f.id = m.file_id WHERE m.channel_id = ? AND m.ts < ? ORDER BY m.ts DESC LIMIT ?`,
+          r.id, before, HISTORY_PAGE + 1).toArray();
         const more = rows.length > HISTORY_PAGE;
-        reply({ t: 'history', channelId: ch.id, msgs: rows.slice(0, HISTORY_PAGE).reverse(), more, users: this.authors(rows) });
+        const msgs = rows.slice(0, HISTORY_PAGE).reverse().map((x) => ({
+          id: x.id, channel: x.channel, uid: x.uid, text: x.text, ts: x.ts, file: x.fid ? { id: x.fid, w: x.w, h: x.h } : null,
+        }));
+        reply({ t: 'history', channelId: r.id, msgs, more, users: this.authors(rows) });
         return;
       }
       case 'typing': {
-        const ch = this.channel(m.channelId);
-        if (!ch || !this.isMember(ch.server_id, att.uid)) return;
-        this.toServer(ch.server_id, { t: 'typing', channelId: ch.id, uid: att.uid }, ws);
+        const r = this.room(m.channelId, att.uid);
+        if (!r) return;
+        if (r.kind === 'dm') this.toUser(r.other, { t: 'typing', channelId: r.id, uid: att.uid });
+        else this.toServer(r.serverId, { t: 'typing', channelId: r.id, uid: att.uid }, ws);
+        return;
+      }
+
+      /* ---- الرسايل الخاصة ---- */
+      case 'dm.open': {
+        const target = m.userId
+          ? this.sql.exec('SELECT * FROM users WHERE id = ?', asId(m.userId)).toArray()[0]
+          : this.sql.exec('SELECT * FROM users WHERE username = ?', clean(m.username, 24).replace(/^@/, '').toLowerCase()).toArray()[0];
+        if (!target) return error('user_not_found');
+        if (target.id === att.uid) return error('dm_self');
+        if (this.isBlocked(att.uid, target.id)) return error('blocked');
+        const [a, b] = [att.uid, target.id].sort();
+        this.sql.exec('INSERT OR IGNORE INTO dms (id, a, b, created, last) VALUES (?, ?, ?, ?, NULL)', newId(), a, b, Date.now());
+        const dm = this.sql.exec('SELECT * FROM dms WHERE a = ? AND b = ?', a, b).one();
+        reply({ t: 'dm.add', dm: this.dmPayload(dm, att.uid), req: m.req });
+        return;
+      }
+      case 'block': {
+        const target = asId(m.userId);
+        if (!target || target === att.uid) return error('bad_request');
+        if (m.on) this.sql.exec('INSERT OR IGNORE INTO blocks (blocker, blocked) VALUES (?, ?)', att.uid, target);
+        else this.sql.exec('DELETE FROM blocks WHERE blocker = ? AND blocked = ?', att.uid, target);
+        this.toUser(att.uid, { t: 'blocks', list: this.blockList(att.uid), req: m.req });
+        return;
+      }
+
+      /* ---- البلاغات ---- */
+      case 'report': {
+        const row = this.sql.exec('SELECT * FROM messages WHERE id = ?', asId(m.messageId)).toArray()[0];
+        const r = row && this.room(row.channel_id, att.uid);
+        if (!r) return error('not_found');
+        if (row.user_id === att.uid) return error('bad_request');
+        if (!REPORT_REASONS[m.reason]) return error('bad_request');
+        // حد: 10 بلاغات كل ساعة
+        att.reports = (att.reports || []).filter((t) => Date.now() - t < 3600000);
+        if (att.reports.length >= 10) return error('slow_down');
+        att.reports.push(Date.now());
+        ws.serializeAttachment(att);
+        this.sql.exec(`INSERT OR IGNORE INTO reports (id, reporter_id, message_id, channel_id, server_id, author_id, reason, note, status, ts)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)`,
+          newId(), att.uid, row.id, row.channel_id, r.serverId || null, row.user_id, m.reason, clean(m.note, 300), Date.now());
+        if (r.kind === 'dm' && m.block) this.sql.exec('INSERT OR IGNORE INTO blocks (blocker, blocked) VALUES (?, ?)', att.uid, row.user_id);
+        if (r.kind === 'text') {
+          const owner = this.sql.exec('SELECT owner_id FROM servers WHERE id = ?', r.serverId).one().owner_id;
+          if (owner !== att.uid) {
+            this.notify(owner, { kind: 'report', server_id: r.serverId, channel_id: r.id, actor_id: att.uid, text: snippet(row.text || '📷 صورة') },
+              { title: `بلاغ جديد في #${r.ch.name}`, body: `${user.display}: ${REPORT_REASONS[m.reason]}`, tag: `report:${r.serverId}`, url: `/?server=${r.serverId}` }, 'mentions');
+          }
+          this.sendReportCount(r.serverId);
+        }
+        reply({ t: 'reported', req: m.req, blocks: this.blockList(att.uid) });
+        return;
+      }
+      case 'reports.list': {
+        if (!this.isOwner(m.serverId, att.uid)) return error('forbidden');
+        reply({ t: 'reports', serverId: m.serverId, list: this.reportList(m.serverId), req: m.req });
+        return;
+      }
+      case 'report.resolve': {
+        const rep = this.sql.exec('SELECT * FROM reports WHERE id = ?', asId(m.id)).toArray()[0];
+        if (!rep || !rep.server_id || !this.isOwner(rep.server_id, att.uid)) return error('forbidden');
+        if (m.action === 'dismiss') {
+          this.sql.exec("UPDATE reports SET status = 'dismissed' WHERE id = ?", rep.id);
+        } else if (m.action === 'delete' || m.action === 'ban') {
+          const row = this.sql.exec('SELECT * FROM messages WHERE id = ?', rep.message_id).toArray()[0];
+          if (row) this.deleteMessage(row, this.room(row.channel_id, att.uid));
+          this.sql.exec("UPDATE reports SET status = 'resolved' WHERE message_id = ?", rep.message_id);
+          if (m.action === 'ban' && rep.author_id !== att.uid) this.banMember(rep.server_id, rep.author_id);
+        } else return error('bad_request');
+        this.sendReportCount(rep.server_id);
+        reply({ t: 'reports', serverId: rep.server_id, list: this.reportList(rep.server_id), req: m.req });
         return;
       }
 
