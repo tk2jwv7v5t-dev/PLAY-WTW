@@ -25,6 +25,10 @@
 
 ## صور من الموقع
 
+### الرئيسية
+لمحة عن كل شي: مين في روم صوتي الحين، قروباتك، مين متصل، آخر المحادثات، واللي يحتاج انتباهك.
+<img src="docs/screenshots/home.webp" alt="الصفحة الرئيسية: تحية، أزرار سريعة، رومات صوتية شغالة، القروبات، والإشعارات" width="820">
+
 ### الشات
 <img src="docs/screenshots/chat.webp" alt="روم كتابي فيه رسايل بين الأعضاء" width="820">
 
@@ -48,6 +52,7 @@
 ### الجوال
 <p>
 <img src="docs/screenshots/mobile-intro.webp" alt="الشاشة الافتتاحية في الجوال" width="250">
+<img src="docs/screenshots/mobile-home.webp" alt="الصفحة الرئيسية في الجوال" width="250">
 <img src="docs/screenshots/mobile-voice.webp" alt="روم صوتي وبث في الجوال" width="250">
 <img src="docs/screenshots/mobile-menu.webp" alt="قائمة القروبات والرومات في الجوال" width="250">
 </p>

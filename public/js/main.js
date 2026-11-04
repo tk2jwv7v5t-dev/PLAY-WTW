@@ -333,6 +333,7 @@ function handle(m) {
     case 'presence': {
       m.online ? S.online.add(m.uid) : S.online.delete(m.uid);
       renderMembers();
+      refreshHome();
       break;
     }
     case 'user.update': {
@@ -370,12 +371,14 @@ function handle(m) {
       S.notifs.unshift(m.notif);
       S.notifs.length = Math.min(S.notifs.length, 50);
       renderBell();
+      refreshHome();
       if (m.notif.kind !== 'mention') beep('msg', settings.sounds && levelOf(m.notif.serverId) === 'all');
       break;
     }
     case 'notif.read': {
       for (const n of S.notifs) if (!m.id || n.id === m.id) n.read = true;
       renderBell();
+      refreshHome();
       break;
     }
     case 'error': {
@@ -416,8 +419,8 @@ function selectServer(id, fromReady = false) {
   S.cur.server = id;
   store.set('lastServer', id);
   const s = curServer();
-  let ch = s ? S.lastChannel[s.id] : S.lastChannel.home;
-  if (s ? !s.channels.some((c) => c.id === ch) : !S.dms.has(ch)) ch = s ? defaultChannel(s) : null;
+  let ch = s ? S.lastChannel[s.id] : null;
+  if (s && !s.channels.some((c) => c.id === ch)) ch = defaultChannel(s);
   if (fromReady && S.cur.channel && s?.channels.some((c) => c.id === S.cur.channel)) ch = S.cur.channel;
   selectChannel(ch);
 }
@@ -425,7 +428,7 @@ function selectServer(id, fromReady = false) {
 function selectChannel(id) {
   S.cur.channel = id;
   const s = curServer();
-  if (id) { S.lastChannel[s ? s.id : 'home'] = id; store.set('lastChannel', S.lastChannel); }
+  if (id && s) { S.lastChannel[s.id] = id; store.set('lastChannel', S.lastChannel); }
   S.unread.delete(id);
   S.mentions.delete(id);
   closeNav();
@@ -475,7 +478,9 @@ function renderSidebar() {
   const list = $('#channelList');
   if (!s) {
     const dms = [...S.dms.values()].sort((a, b) => (b.last || 0) - (a.last || 0));
-    list.innerHTML = `<div class="ch-group">
+    list.innerHTML = `<div class="ch home-link${!S.cur.channel ? ' active' : ''}" role="button" tabindex="0" data-home>
+        <span class="ch-icon">${I.home}</span><span class="ch-name">الرئيسية</span></div>
+    <div class="ch-group">
       <div class="ch-group-head"><span>الرسائل الخاصة</span><button class="mini-btn" type="button" data-new-dm title="رسالة خاصة جديدة">${I.plus}</button></div>
       ${dms.length ? dms.map((d) => `
         <div class="ch dm${d.id === S.cur.channel ? ' active' : ''}${S.unread.has(d.id) ? ' unread' : ''}" role="button" tabindex="0" data-ch="${d.id}">
@@ -520,19 +525,24 @@ function renderMain() {
   const s = curServer();
   const found = S.cur.channel ? findChannel(S.cur.channel) : null;
   const c = found?.server === s ? found.channel : null;
-  $('#emptyView').classList.toggle('hidden', !!c);
+  const home = !s && !c;
+  $('#homeView').classList.toggle('hidden', !home);
+  $('#emptyView').classList.toggle('hidden', !!c || home);
   $('#textView').classList.toggle('hidden', !['text', 'dm'].includes(c?.kind));
   $('#voiceView').classList.toggle('hidden', c?.kind !== 'voice');
-  // لما تتغير الصفحة أو الروم نعرضها بحركة خفيفة
-  const viewKey = c ? c.id : `empty:${s?.id || ''}`;
+  if (home) renderHome();
+  // لما تتغير الصفحة أو الروم نعرضها بحركة خفيفة (مرة وحدة، مو مع كل تحديث)
+  const viewKey = c ? c.id : home ? 'home' : `empty:${s?.id || ''}`;
   if (viewKey !== S.lastView) {
     S.lastView = viewKey;
-    const v = $(c ? (c.kind === 'voice' ? '#voiceView' : '#textView') : '#emptyView');
+    const v = $(c ? (c.kind === 'voice' ? '#voiceView' : '#textView') : home ? '#homeView' : '#emptyView');
     v.classList.remove('view-in'); void v.offsetWidth; v.classList.add('view-in');
+    clearTimeout(S.viewTimer);
+    S.viewTimer = setTimeout(() => v.classList.remove('view-in'), 900);
   }
   const dm = c?.kind === 'dm' ? c.dm : null;
-  $('#chanIcon').innerHTML = c ? (c.kind === 'voice' ? I.volume : dm ? I.at : I.hash) : '';
-  $('#chanName').textContent = c ? c.name : s ? s.name : 'PLAY WTW';
+  $('#chanIcon').innerHTML = c ? (c.kind === 'voice' ? I.volume : dm ? I.at : I.hash) : home ? I.home : '';
+  $('#chanName').textContent = c ? c.name : s ? s.name : 'الرئيسية';
   $('#chanTopic').textContent = c?.kind === 'voice' ? 'روم صوتي' : dm ? `@${dm.other?.username || ''}` : c ? `في ${s.name}` : '';
   $('#msgInput').placeholder = dm ? `اكتب رسالة لـ ${c.name}` : c ? `اكتب رسالة في #${c.name}` : '';
   document.title = c ? `${dm ? '@' : c.kind === 'voice' ? '🔊' : '#'}${c.name}${s ? ` · ${s.name}` : ''} — PLAY WTW` : 'PLAY WTW';
@@ -649,6 +659,7 @@ function onMessage(msg, nonce) {
     if (mentioned) S.mentions.set(msg.channel, (S.mentions.get(msg.channel) || 0) + 1);
     renderRail(); renderSidebar();
     if (wanted) beep('msg', settings.sounds);
+    refreshHome();
   }
 }
 
@@ -862,6 +873,7 @@ function onVoiceState(v) {
   }
   renderSidebar();
   renderVoiceViewIfOpen();
+  refreshHome();
 }
 
 function attachAudio(sid, stream) {
@@ -1842,6 +1854,7 @@ $('#micTest').addEventListener('click', async () => {
     catch (e) { toast(e.name === 'NotAllowedError' ? 'المتصفح منع المايك. اسمح له من أيقونة القفل جنب رابط الموقع' : 'ما قدرنا نشغّل المايك', 'err'); return; }
   }
   $('#micTest').classList.toggle('active', on);
+  if (on) store.set('micTested', true);
   $('#micTest').textContent = on ? 'وقف التجربة' : 'جرّب المايك';
   mic.setMonitor(on);
 });
@@ -1940,6 +1953,7 @@ $('#serverList').addEventListener('click', (e) => {
   if (b) selectServer(b.dataset.server);
 });
 $('#homeBtn').addEventListener('click', () => selectServer(null));
+$('#channelList').addEventListener('click', (e) => { if (e.target.closest('[data-home]')) selectServer(null); });
 $('#addServerBtn').addEventListener('click', () => openServerModal());
 $('#emptyCreate').addEventListener('click', () => openServerModal('create'));
 $('#emptyJoin').addEventListener('click', () => openServerModal('join'));
@@ -2123,6 +2137,16 @@ function openLevelPop(s) {
 }
 
 /* ---- الجرس ---- */
+function openNotif(id) {
+  const n = S.notifs.find((x) => x.id === id);
+  if (!n) return;
+  if (!n.read) send({ t: 'notif.read', id: n.id });
+  if (n.kind === 'report' && S.me.admin) { openAdmin(); return; }
+  if (n.kind === 'report' && S.servers.has(n.serverId)) { selectServer(n.serverId); openReports(n.serverId); return; }
+  if (n.channelId && findChannel(n.channelId)) openTarget({ channel: n.channelId });
+  else if (S.servers.has(n.serverId)) openTarget({ server: n.serverId });
+  else toast('هالروم أو القروب انحذف', 'err');
+}
 function renderBell() {
   const n = S.notifs.filter((x) => !x.read).length;
   const b = $('#bellBadge');
@@ -2135,7 +2159,7 @@ function notifLine(n) {
   const who = `<b>${esc(n.actor?.display || 'حساب محذوف')}</b>`;
   const f = n.channelId && findChannel(n.channelId);
   const server = S.servers.get(n.serverId);
-  if (n.kind === 'mention') return `<span>${who} منشنك في <b>#${esc(f?.channel.name || '')}</b></span><q>${esc(n.text)}</q>`;
+  if (n.kind === 'mention') return `<span>${who} منشنك في <b>#${esc(f?.channel.name || '')}</b></span><q>${mentionify(esc(n.text), server)}</q>`;
   if (n.kind === 'join') return `<span>${who} دخل قروبك <b>${esc(server?.name || n.text)}</b></span>`;
   if (n.kind === 'live') return `<span>${who} بث شاشته في <b>${esc(f?.channel.name || n.text)}</b></span>`;
   if (n.kind === 'report') return `<span>${who} بلّغ عن رسالة ${n.serverId ? `في <b>#${esc(f?.channel.name || '')}</b>` : 'خاصة'}</span><q>${esc(n.text)}</q>`;
@@ -2158,15 +2182,8 @@ $('#bellBtn').addEventListener('click', () => {
       if (e.target.closest('[data-read-all]')) { send({ t: 'notif.read', all: true }); return; }
       const item = e.target.closest('[data-notif]');
       if (!item) return;
-      const n = S.notifs.find((x) => x.id === item.dataset.notif);
-      if (!n) return;
-      if (!n.read) send({ t: 'notif.read', id: n.id });
       closePop();
-      if (n.kind === 'report' && S.me.admin) { openAdmin(); return; }
-      if (n.kind === 'report' && S.servers.has(n.serverId)) { selectServer(n.serverId); openReports(n.serverId); return; }
-      if (n.channelId && findChannel(n.channelId)) openTarget({ channel: n.channelId });
-      else if (S.servers.has(n.serverId)) openTarget({ server: n.serverId });
-      else toast('هالروم أو القروب انحذف', 'err');
+      openNotif(item.dataset.notif);
     };
   });
 });
@@ -2686,3 +2703,186 @@ $('#adminModal').addEventListener('click', async (e) => {
     toast({ dismiss: 'تجاهلنا البلاغ', delete: 'انحذفت الرسالة', suspend: 'انحذفت الرسالة وانوقف الحساب' }[act.dataset.admin], 'ok');
   } catch (err) { toast(ERRORS[err.message] || ERRORS.network, 'err'); }
 });
+
+/* =====================================================
+   الرئيسية: لمحة عن كل شي يصير الحين
+   ===================================================== */
+const homeOpen = () => !S.cur.server && !S.cur.channel && !$('#app').classList.contains('hidden');
+function refreshHome() { if (homeOpen()) renderHome(); }
+
+function greeting() {
+  const h = new Date().getHours();
+  if (h < 5) return 'سهرانين الليلة';
+  if (h < 12) return 'صباح الخير';
+  return 'مساء الخير';
+}
+const plural = (n, one, two, many) => (n === 1 ? one : n === 2 ? two : `${n} ${many}`);
+const serverIcon = (s) => (s.iconUrl ? `<img src="${esc(s.iconUrl)}" alt="">` : `<span>${esc([...s.name][0] || '؟')}</span>`);
+
+function renderHome() {
+  if (!S.me) return;
+  const servers = [...S.servers.values()];
+  // الرومات الصوتية اللي فيها ناس الحين
+  const rooms = new Map();
+  for (const v of S.voice.values()) {
+    const f = findChannel(v.channel);
+    if (!f) continue;
+    if (!rooms.has(v.channel)) rooms.set(v.channel, { ...f, people: [] });
+    rooms.get(v.channel).people.push(v);
+  }
+  const live = [...rooms.values()].sort((a, b) => b.people.length - a.people.length);
+  // ناس من قروباتك متصلين
+  const friends = new Map();
+  for (const s of servers) for (const u of s.members.values()) if (u.id !== S.me.id && S.online.has(u.id)) friends.set(u.id, u);
+  const inVoice = new Map([...S.voice.values()].map((v) => [v.uid, v]));
+  const dms = [...S.dms.values()].sort((a, b) => (b.last || 0) - (a.last || 0)).slice(0, 5);
+  const dmUnread = dms.filter((d) => S.unread.has(d.id)).length;
+  const pings = [...S.mentions.values()].reduce((a, b) => a + b, 0);
+  const attention = S.notifs.filter((n) => !n.read).slice(0, 4);
+
+  // سطر الملخص: وش الجديد بكلمات واضحة
+  const news = [];
+  if (dmUnread) news.push(plural(dmUnread, 'رسالة خاصة جديدة', 'رسالتين خاصة', 'رسايل خاصة جديدة'));
+  if (pings) news.push(plural(pings, 'منشن ما شفته', 'منشنين ما شفتهم', 'منشنات ما شفتها'));
+  const talking = live.reduce((n, r) => n + r.people.length, 0);
+  let summary = news.length ? `عندك ${news.join(' و')}.` : '';
+  if (talking) summary += `${summary ? ' ' : ''}فيه ${plural(talking, 'شخص واحد', 'شخصين', 'أشخاص')} في ${live.length === 1 ? 'روم صوتي' : 'رومات صوتية'} الحين.`;
+  if (!summary) summary = servers.length ? 'كل شي مقري. وش ناوي تسوي الحين؟' : 'خلّنا نبدأ: سوّ قروب لك ولأصحابك، أو ادخل واحد بكود دعوة.';
+
+  // خطوات البداية للمستخدم الجديد
+  const steps = [
+    ['create', 'ادخل أول قروب', servers.length > 0],
+    ['invite', 'ادعُ أصحابك للقروب', servers.some((s) => s.members.size > 1)],
+    ['push', 'فعّل الإشعارات', S.pushOn],
+    ['mic', 'جرّب المايك', !!store.get('micTested', false)],
+  ];
+  const done = steps.filter((x) => x[2]).length;
+  const showSteps = done < steps.length && !store.get('onboardDone', false);
+
+  const actions = [
+    ['create', I.plus, 'سوّ قروب', 'مكان لك ولأصحابك'],
+    ['join', I.userPlus, 'ادخل بكود', 'عندك رابط أو كود دعوة'],
+    ['dm', I.at, 'رسالة خاصة', 'كلّم أحد على انفراد'],
+    ['mic', I.mic, 'جهّز المايك', 'اختبر صوتك وعزل الضوضاء'],
+  ];
+
+  let i = 0;
+  const card = () => `style="--i:${i++}"`;
+  $('#homeInner').innerHTML = `
+    <header class="home-hero" ${card()}>
+      <div class="hh-text">
+        <h1>${greeting()}، ${esc(S.me.display)}</h1>
+        <p>${esc(summary)}</p>
+      </div>
+      <div class="quick">
+        ${actions.map(([a, icon, t, d]) => `<button type="button" class="quick-btn" data-home-act="${a}"><span class="qb-icon">${icon}</span><b>${t}</b><small>${d}</small></button>`).join('')}
+      </div>
+    </header>
+
+    ${showSteps ? `
+    <section class="home-card onboard" ${card()}>
+      <div class="hc-head"><h2>خلّنا نجهّزك</h2><span class="muted">${done} من ${steps.length}</span>
+        <button type="button" class="btn-link" data-home-act="hideOnboard">ما أحتاجها</button></div>
+      <div class="progress"><i style="width:${(done / steps.length) * 100}%"></i></div>
+      <div class="steps">${steps.map(([a, t, ok]) => `<button type="button" class="step${ok ? ' done' : ''}" data-home-act="${a}" ${ok ? 'disabled' : ''}>
+        <span class="step-dot">${ok ? I.check : ''}</span>${t}</button>`).join('')}</div>
+    </section>` : ''}
+
+    ${servers.length || dms.length ? `<div class="home-cols">
+      <div class="home-main">
+        <section class="home-card" ${card()}>
+          <div class="hc-head"><h2>شغّال الحين</h2>${live.length ? `<span class="live-dot">مباشر</span>` : ''}</div>
+          ${live.length ? `<div class="live-list">${live.map((r) => {
+            const mine = S.myVoice === r.channel.id;
+            const sharing = r.people.find((v) => v.sharing);
+            return `<div class="live-room">
+              <div class="lr-icon">${serverIcon(r.server)}</div>
+              <div class="lr-info">
+                <b>${esc(r.channel.name)}</b><small>${esc(r.server.name)}</small>
+                <div class="lr-people">${r.people.slice(0, 5).map((v) => avatar(userOf(v.uid), 'xs')).join('')}
+                  <span>${r.people.length === 1 ? esc(userOf(r.people[0].uid).display) : plural(r.people.length, '', 'شخصين', 'أشخاص')}</span>
+                  ${sharing ? `<b class="live-tag">LIVE</b><span class="muted">${esc(userOf(sharing.uid).display)} يبث</span>` : ''}</div>
+              </div>
+              <button type="button" class="btn ${mine ? 'btn-soft' : 'btn-primary'} btn-sm" data-join-voice="${esc(r.channel.id)}">${mine ? 'انت فيه' : 'ادخل'}</button>
+            </div>`;
+          }).join('')}</div>` : `<p class="home-empty">ما أحد في روم صوتي الحين. ادخل واحد وخلّهم يلحقونك 🎧</p>`}
+        </section>
+
+        <section class="home-card" ${card()}>
+          <div class="hc-head"><h2>قروباتك</h2><span class="muted">${servers.length || ''}</span></div>
+          ${servers.length ? `<div class="group-grid">${servers.map((s) => {
+            const on = [...s.members.keys()].filter((id) => S.online.has(id)).length;
+            const unread = s.channels.some((c) => S.unread.has(c.id)) && levelOf(s.id) !== 'none';
+            const p = s.channels.reduce((n, c) => n + (S.mentions.get(c.id) || 0), 0);
+            return `<button type="button" class="group-card${unread ? ' unread' : ''}" data-go-server="${esc(s.id)}">
+              <span class="gc-icon">${serverIcon(s)}${p ? `<b class="rail-badge">${p}</b>` : ''}</span>
+              <b>${esc(s.name)}</b>
+              <small><i class="dot${on ? ' on' : ''}"></i>${on} متصل من ${s.members.size}</small>
+            </button>`;
+          }).join('')}</div>` : `<p class="home-empty">ما عندك قروبات للحين. اضغط "سوّ قروب" فوق.</p>`}
+        </section>
+      </div>
+
+      <aside class="home-side">
+        ${attention.length ? `<section class="home-card" ${card()}>
+          <div class="hc-head"><h2>يحتاج انتباهك</h2><button type="button" class="btn-link" data-home-act="readAll">تحديد الكل كمقروء</button></div>
+          <div class="home-list">${attention.map((n) => `<button type="button" class="hl-row notif" data-notif="${esc(n.id)}">
+            ${avatar(n.actor || { display: '؟' }, 'xs')}<span class="bell-text">${notifLine(n)}<time>${timeLabel(n.ts)}</time></span></button>`).join('')}</div>
+        </section>` : ''}
+
+        <section class="home-card" ${card()}>
+          <div class="hc-head"><h2>متصلين الحين</h2><span class="muted">${friends.size || ''}</span></div>
+          ${friends.size ? `<div class="home-list">${[...friends.values()].slice(0, 8).map((u) => {
+            const v = inVoice.get(u.id);
+            const where = v && findChannel(v.channel);
+            return `<div class="hl-row">
+              <div class="avatar-wrap">${avatar(u, 'sm')}<i class="status on"></i></div>
+              <span class="hl-text"><b>${esc(u.display)}</b><small>${where ? `في ${esc(where.channel.name)}` : 'متصل'}</small></span>
+              <button type="button" class="icon-btn ghost sm" data-dm-user="${esc(u.id)}" title="ارسل له رسالة" aria-label="ارسل رسالة لـ ${esc(u.display)}">${I.chat}</button>
+            </div>`;
+          }).join('')}</div>` : `<p class="home-empty">ما أحد من قروباتك متصل الحين.</p>`}
+        </section>
+
+        <section class="home-card" ${card()}>
+          <div class="hc-head"><h2>آخر المحادثات</h2><button type="button" class="btn-link" data-home-act="dm">جديدة</button></div>
+          ${dms.length ? `<div class="home-list">${dms.map((d) => `<button type="button" class="hl-row${S.unread.has(d.id) ? ' unread' : ''}" data-open-dm="${esc(d.id)}">
+            ${avatar(d.other, 'sm')}<span class="hl-text"><b>${esc(d.other.display)}</b><small>${d.last ? timeLabel(d.last) : ''}</small></span>
+            ${S.unread.has(d.id) ? '<i class="dot unread-dot"></i>' : ''}</button>`).join('')}</div>`
+            : `<p class="home-empty">ما عندك محادثات خاصة للحين.</p>`}
+        </section>
+      </aside>
+    </div>` : ''}`;
+}
+
+$('#homeInner').addEventListener('click', (e) => {
+  const act = e.target.closest('[data-home-act]');
+  if (act) {
+    switch (act.dataset.homeAct) {
+      case 'create': openServerModal('create'); break;
+      case 'join': openServerModal('join'); break;
+      case 'dm': openDmModal(); break;
+      case 'mic': openSettings(); break;
+      case 'push': openSettings().then(() => $('#settingsModal .seg-tabs [data-pane=notify]').click()); break;
+      case 'invite': {
+        const s = [...S.servers.values()].find((x) => x.owner === S.me.id) || [...S.servers.values()][0];
+        if (s) openInvite(s); else openServerModal('create');
+        break;
+      }
+      case 'readAll': send({ t: 'notif.read', all: true }); break;
+      case 'hideOnboard': store.set('onboardDone', true); renderHome(); toast('تقدر تلقى كل هذي من الأزرار فوق'); break;
+    }
+    return;
+  }
+  const join = e.target.closest('[data-join-voice]');
+  if (join) { openChannel(join.dataset.joinVoice); joinVoice(join.dataset.joinVoice); return; }
+  const srv = e.target.closest('[data-go-server]');
+  if (srv) { selectServer(srv.dataset.goServer); return; }
+  const dmU = e.target.closest('[data-dm-user]');
+  if (dmU) { startDm({ userId: dmU.dataset.dmUser }); return; }
+  const dm = e.target.closest('[data-open-dm]');
+  if (dm) { openChannel(dm.dataset.openDm); return; }
+  const n = e.target.closest('[data-notif]');
+  if (n) openNotif(n.dataset.notif);
+});
+// التحية تتغير مع الوقت
+setInterval(refreshHome, 60000);
