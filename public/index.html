@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl" data-theme="light">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
   <title>PLAY WTW — Play with me and talk with me</title>
   <meta name="description" content="قروبات ورومات صوت وشات وبث شاشة لين 4K مع أصحابك.">
   <meta name="theme-color" content="#e8eaee">
@@ -219,9 +219,15 @@
           <p id="vjSub" class="muted"></p>
           <button id="vjBtn" class="btn btn-primary btn-lg" type="button">ادخل الروم الصوتي</button>
         </div>
+        <button id="callInvite" class="call-invite hidden" type="button">
+          <span class="ci-icon" data-icon="userPlus"></span>
+          <span class="ci-text"><b>ادعُ ربعك للروم</b><small>خلّ القروب يدري إنك هنا</small></span>
+          <span class="ci-go" data-icon="arrow"></span>
+        </button>
         <nav id="dock" class="dock hidden" aria-label="التحكم">
           <button id="dMic" class="dock-btn" type="button" title="المايك"></button>
           <button id="dDeaf" class="dock-btn" type="button" title="كتم الصوت"></button>
+          <button id="dChat" class="dock-btn only-call" type="button" title="الشات" aria-label="افتح شات القروب" data-icon="chat"></button>
           <div class="split">
             <button id="dShare" class="dock-btn" type="button" title="بث الشاشة"></button>
             <button id="dShareCfg" class="dock-btn mini" type="button" title="جودة البث" data-icon="sliders"></button>

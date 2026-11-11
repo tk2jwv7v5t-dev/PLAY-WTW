@@ -6,7 +6,7 @@ import { startIntro } from './intro.js';
 import { MicPipeline, LevelWatcher } from './audio.js';
 import { VoiceSession } from './voice.js';
 import { SUPPORT } from './config.js';
-import { pushSupported, isIOS, isStandalone, inApp, registerWorker, currentSubscription, enablePush, disablePush, testPush } from './push.js';
+import { pushSupported, isIOS, isStandalone, inApp, appNotifySupported, appNotifyAllowed, appNotify, onAppNotifyTap, registerWorker, currentSubscription, enablePush, disablePush, testPush } from './push.js';
 
 const RES = { 720: [1280, 720], 1080: [1920, 1080], 1440: [2560, 1440], 2160: [3840, 2160] };
 const PRESETS = [
@@ -257,6 +257,10 @@ function handle(m) {
       selectServer(S.cur.server, true);
       // الجوال يفتح على قائمة الرسايل، إلا الحساب الجديد يشوف صفحة الترحيب وخطوات البداية
       if (!S.readyOnce && isMobile() && (S.servers.size || S.dms.size)) mobileTab('home');
+      if (!S.readyOnce && appNotifySupported() && !store.get('appNotifyAsked', false)) {
+        store.set('appNotifyAsked', true);
+        appNotifyAllowed(true).then((ok) => { settings.notify = ok; saveSettings(); });
+      }
       S.readyOnce = true;
       renderBell();
       sendFocus();
@@ -384,6 +388,11 @@ function handle(m) {
       renderBell();
       refreshHome();
       if (m.notif.kind !== 'mention') beep('msg', settings.sounds && levelOf(m.notif.serverId) === 'all');
+      if (appNotifySupported() && settings.notify && document.hidden && m.notif.kind !== 'mention') {
+        const n = m.notif, who = n.actor?.display || '';
+        const text = n.kind === 'join' ? `${who} دخل قروبك` : n.kind === 'live' ? `${who} بدأ يبث الحين` : n.kind === 'report' ? `بلاغ جديد من ${who}` : n.text;
+        appNotify('PLAY WTW', text, { notif: n.id });
+      }
       break;
     }
     case 'notif.read': {
@@ -628,6 +637,7 @@ function renderMain() {
   $('#blockedBar').classList.toggle('hidden', !blocked);
   $('#composer').classList.toggle('hidden', blocked);
   $('#app').classList.toggle('in-dm', !s);
+  $('#app').classList.toggle('in-call', c?.kind === 'voice' && S.myVoice === c.id);
   if (c?.kind === 'voice') renderVoiceView(c);
   renderVoicePanel();
 }
@@ -1073,6 +1083,8 @@ function renderVoiceView(c) {
   const people = [...S.voice.values()].filter((v) => v.channel === c.id);
   $('#voiceJoin').classList.toggle('hidden', inThis);
   $('#dock').classList.toggle('hidden', !inThis);
+  $('#callInvite').classList.toggle('hidden', !inThis);
+  $('#app').classList.toggle('in-call', inThis);
   $('#stage').classList.toggle('hidden', !inThis && !people.length);
   if (!inThis) {
     $('#vjTitle').textContent = c.name;
@@ -1944,8 +1956,12 @@ async function openSettings() {
   $('#optNotify').checked = settings.notify && 'Notification' in window && Notification.permission === 'granted';
   $('#optNotifyAll').checked = settings.notifyAll;
   $('#optNotifyAll').disabled = !$('#optNotify').checked;
-  $('#optNotify').disabled = !('Notification' in window);
-  if (!('Notification' in window)) $('#notifyHint').textContent = 'متصفحك ما يدعم الإشعارات. في الآيفون: أضف الموقع للشاشة الرئيسية أول.';
+  $('#optNotify').disabled = !('Notification' in window) && !appNotifySupported();
+  if (appNotifySupported()) {
+    $('#optNotify').checked = settings.notify;
+    $('#optNotifyAll').disabled = !settings.notify;
+    $('#optNotify').nextElementSibling.nextElementSibling.textContent = 'إشعار لما توصل رسالة والتطبيق بالخلفية';
+  } else if (!('Notification' in window)) $('#notifyHint').textContent = 'متصفحك ما يدعم الإشعارات. في الآيفون: أضف الموقع للشاشة الرئيسية أول.';
   $$('#settingsModal input[name=fontScale]').forEach((r) => { r.checked = r.value === settings.fontScale; });
   $$('#settingsModal input[name=theme]').forEach((r) => { r.checked = r.value === settings.theme; });
   $('#optReduceMotion').checked = settings.reduceMotion;
@@ -2009,7 +2025,15 @@ $('#settingsModal').addEventListener('change', async (e) => {
   } else if (t.id === 'optEc') { settings.ec = t.checked; await applyMicSettings(); }
   else if (t.id === 'optAgc') { settings.agc = t.checked; await applyMicSettings(); }
   else if (t.id === 'optSounds') { settings.sounds = t.checked; saveSettings(); }
-  else if (t.id === 'optNotify') {
+  else if (t.id === 'optNotify' && appNotifySupported()) {
+    if (t.checked && !(await appNotifyAllowed(true))) {
+      t.checked = false;
+      $('#notifyHint').textContent = 'الجوال منع الإشعارات. فعّلها من إعدادات الآيفون ← PLAY WTW ← الإشعارات.';
+    }
+    settings.notify = t.checked;
+    $('#optNotifyAll').disabled = !t.checked;
+    saveSettings();
+  } else if (t.id === 'optNotify') {
     if (t.checked && Notification.permission !== 'granted') {
       const p = await Notification.requestPermission().catch(() => 'denied');
       if (p !== 'granted') {
@@ -2187,6 +2211,17 @@ for (const id of ['#micBtn', '#dMic']) $(id).addEventListener('click', toggleMic
 for (const id of ['#deafBtn', '#dDeaf']) $(id).addEventListener('click', () => setDeaf(!S.deaf));
 for (const id of ['#dShare', '#vpShare']) $(id).addEventListener('click', (e) => shareClicked(e.currentTarget));
 $('#dFlip').addEventListener('click', flipCamera);
+$('#callInvite').addEventListener('click', () => { const f = S.myVoice && findChannel(S.myVoice); if (f?.server) openInvite(f.server); });
+$('#dChat').addEventListener('click', () => {
+  const f = S.myVoice && findChannel(S.myVoice);
+  const text = f?.server?.channels.find((c) => c.kind === 'text');
+  if (text) openChannel(text.id); else toast('ما فيه روم كتابي في هالقروب');
+});
+// لمسة على إشعار التطبيق تفتح المحادثة
+onAppNotifyTap((x) => {
+  if (x.channel && findChannel(x.channel)) openChannel(x.channel);
+  else if (x.notif) openNotif(x.notif);
+});
 $('#dShareCfg').addEventListener('click', openShareModal);
 for (const id of ['#dLeave', '#vpLeave']) $(id).addEventListener('click', () => leaveVoice());
 $('#settingsBtn').addEventListener('click', openSettings);
@@ -2266,6 +2301,15 @@ const keyLabel = (code) => code.replace(/^Key/, '').replace(/^Digit/, '').replac
 
 /* ---- الإشعارات ---- */
 function notifyMessage(msg, mentioned) {
+  if (appNotifySupported()) {
+    if (!settings.notify) return;
+    if (!document.hidden && !(settings.notifyAll && S.cur.channel !== msg.channel)) return;
+    const f = findChannel(msg.channel);
+    const u = userOf(msg.uid);
+    const title = f?.channel.kind === 'dm' ? u.display : `${u.display}${mentioned ? ' منشنك' : ''} في #${f?.channel.name || ''}`;
+    appNotify(title, msg.text || (msg.file ? '📷 صورة' : ''), { channel: msg.channel });
+    return;
+  }
   if (!settings.notify || !('Notification' in window) || Notification.permission !== 'granted') return;
   if (!document.hidden && !(settings.notifyAll && S.cur.channel !== msg.channel)) return;
   // إشعارات الجهاز شغالة: السيرفر بيرسلها لما الموقع مو قدامك، فما نكررها هنا

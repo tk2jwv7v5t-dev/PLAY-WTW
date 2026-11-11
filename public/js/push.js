@@ -8,6 +8,29 @@ export const isStandalone = () => matchMedia('(display-mode: standalone)').match
 // داخل تطبيق الآيفون (Capacitor)
 export const inApp = () => !!window.Capacitor?.isNativePlatform?.();
 
+// إشعارات الجوال داخل التطبيق (بدون حساب مطوّرين): تشتغل والتطبيق مفتوح أو بالخلفية
+const LN = () => window.Capacitor?.Plugins?.LocalNotifications || null;
+export const appNotifySupported = () => inApp() && !!LN();
+export async function appNotifyAllowed(ask = false) {
+  const ln = LN();
+  if (!ln) return false;
+  try {
+    let p = await ln.checkPermissions();
+    if (p.display !== 'granted' && ask) p = await ln.requestPermissions();
+    return p.display === 'granted';
+  } catch { return false; }
+}
+let notifSeq = 0;
+export function appNotify(title, body, extra = {}) {
+  const ln = LN();
+  if (!ln) return;
+  const id = (Math.floor(Date.now() / 1000) * 10 + (notifSeq++ % 10)) % 2147483647;
+  ln.schedule({ notifications: [{ id, title: String(title).slice(0, 120), body: String(body || '').slice(0, 240), extra }] }).catch(() => {});
+}
+export function onAppNotifyTap(cb) {
+  LN()?.addListener('localNotificationActionPerformed', (e) => cb(e?.notification?.extra || {}));
+}
+
 let regPromise = null;
 export function registerWorker() {
   if (!('serviceWorker' in navigator)) return Promise.resolve(null);

@@ -1399,3 +1399,84 @@ button.hl-row:hover, .hl-row:has(button:hover) { background: var(--bg-3); }
 @media (max-width: 900px) {
   .rail, .sidebar, .members-panel, .m-screen { top: env(safe-area-inset-top); }
 }
+
+/* =====================================================
+   الجوال: الآيفون يكبّر الصفحة لما تضغط خانة كتابة خطها أصغر من 16px ويعلق مكبّر
+   ===================================================== */
+@media (pointer: coarse) {
+  input:not([type=checkbox]):not([type=radio]):not([type=range]), textarea, select { font-size: 16px !important; }
+}
+
+/* =====================================================
+   شاشة المكالمة في الجوال: داكنة وملء الشاشة، كروت كبيرة، وأزرار دائرية تحت
+   ===================================================== */
+.only-call, .call-invite { display: none; }
+@media (max-width: 900px) {
+  :root .app.in-call .main { background: #000; }
+  :root .app.in-call .main-head { background: #000; color: #fff; border: 0; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+  :root .app.in-call .main-head .icon-btn { color: #e6e6ea; }
+  :root .app.in-call .main-head .chan-icon { color: #9a9aa3; }
+  :root .app.in-call .voice-view { background: #000; animation: none; }
+  :root .app.in-call .stage { padding: 8px 16px 0; gap: 10px; }
+
+  /* الكروت: واحد = كرت مربع كبير، اثنين = فوق بعض، ثلاثة وأكثر = شبكة */
+  :root .app.in-call .tiles { display: grid; grid-template-columns: minmax(0, 1fr); grid-auto-rows: minmax(0, 1fr); gap: 10px; align-content: stretch; overflow: hidden; }
+  :root .app.in-call .tiles:has(.tile:nth-child(3)) { grid-template-columns: 1fr 1fr; }
+  :root .app.in-call .tile {
+    width: auto; height: auto; aspect-ratio: auto; min-height: 0; border: 0; border-radius: 28px;
+    background: #2b2b30; box-shadow: none; position: relative; display: grid; place-items: center; gap: 0;
+    transition: box-shadow .15s;
+  }
+  :root .app.in-call .tiles:not(:has(.tile:nth-child(2))) { align-content: center; justify-items: center; }
+  :root .app.in-call .tiles:not(:has(.tile:nth-child(2))) .tile { width: min(100%, 58vh); aspect-ratio: 1; }
+  :root .app.in-call .tile .avatar.xl { width: 96px; height: 96px; font-size: 38px; box-shadow: none; }
+  :root .app.in-call .tiles:has(.tile:nth-child(3)) .tile .avatar.xl { width: 72px; height: 72px; font-size: 28px; }
+  :root .app.in-call .tile.speaking { box-shadow: inset 0 0 0 3px #23a55a; }
+  :root .app.in-call .tile-name {
+    position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 24px);
+    padding: 6px 14px; border-radius: 999px; background: #111214; color: #fff; font-size: 15px; font-weight: 700;
+  }
+  :root .app.in-call .tile-name small { color: #9a9aa3; }
+  :root .app.in-call .tile-icons { top: 14px; bottom: auto; inset-inline-end: 14px; color: #fff; }
+  :root .app.in-call .tile-vol-tag { top: 14px; inset-inline-start: 14px; color: #c9c9d1; }
+  :root .app.in-call .stage.has-screens .tiles { display: flex; overflow-x: auto; }
+  :root .app.in-call .stage.has-screens .tile { width: 120px; height: 120px; flex: none; aspect-ratio: 1; }
+  :root .app.in-call .stage.has-screens .tile .avatar.xl { width: 48px; height: 48px; font-size: 20px; }
+  :root .app.in-call .stage.has-screens .tile-name { font-size: 12px; bottom: 8px; padding: 3px 10px; }
+
+  /* كرت "ادعُ ربعك" */
+  :root .app.in-call .call-invite {
+    display: flex; align-items: center; gap: 12px; margin: 12px 16px 0; padding: 14px 16px;
+    border-radius: 22px; background: #111214; color: #fff; text-align: start;
+  }
+  :root .app.in-call .call-invite.hidden { display: none; }
+  .ci-icon { width: 44px; height: 44px; flex: none; border-radius: 50%; display: grid; place-items: center; background: #2b2b30; }
+  .ci-icon svg.i { width: 22px; height: 22px; }
+  .ci-text { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .ci-text b { font-size: 17px; }
+  .ci-text small { font-size: 14px; color: #b5b5be; }
+  .ci-go svg.i { width: 20px; height: 20px; color: #b5b5be; }
+
+  /* شريط الأزرار */
+  :root .app.in-call .dock {
+    position: relative; left: auto; bottom: auto; transform: none;
+    margin: 12px 16px calc(12px + env(safe-area-inset-bottom)); padding: 24px 14px 18px;
+    justify-content: space-between; gap: 6px; border-radius: 32px; border: 0;
+    background: #111214; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none;
+  }
+  :root .app.in-call .dock::before { content: ""; position: absolute; top: 9px; left: 50%; transform: translateX(-50%); width: 40px; height: 4px; border-radius: 4px; background: #3a3a40; }
+  :root .app.in-call .dock.hidden { display: none; }
+  :root .app.in-call .dock-btn { width: 58px; height: 58px; border-radius: 50%; background: #2b2b30; color: #fff; }
+  :root .app.in-call .dock-btn svg.i { width: 26px; height: 26px; }
+  :root .app.in-call .dock-btn.off { background: #2b2b30; color: #fff; }
+  :root .app.in-call .dock-btn.live { background: #23a55a; color: #fff; }
+  :root .app.in-call .dock-btn.danger { background: #ed4245; color: #fff; }
+  :root .app.in-call .dock-btn.hidden { display: none; }
+  :root .app.in-call .only-call { display: grid; }
+  :root .app.in-call .split { display: contents; }
+  :root .app.in-call #dShareCfg { display: none; }
+}
+@media (max-width: 900px) {
+  /* عدد فردي: آخر كرت ياخذ العرض كامل */
+  :root .app.in-call .tiles:has(.tile:nth-child(3)) .tile:last-child:nth-child(odd) { grid-column: 1 / -1; }
+}
