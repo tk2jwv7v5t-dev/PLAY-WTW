@@ -1,12 +1,17 @@
 /* =====================================================
    PLAY WTW — الواجهة
    ===================================================== */
+import { startI18n, tr, LANG, setLang } from './i18n.js';
 import { I, $, $$, esc, clean, fillIcons, autoLabel, busy, avatar, linkify, timeLabel, timeAgo, store, toast, beep, ERRORS } from './util.js';
 import { startIntro } from './intro.js';
 import { MicPipeline, LevelWatcher } from './audio.js';
 import { VoiceSession } from './voice.js';
 import { SUPPORT } from './config.js';
 import { pushSupported, isIOS, isStandalone, inApp, appNotifySupported, appNotifyAllowed, appNotify, onAppNotifyTap, registerWorker, currentSubscription, enablePush, disablePush, testPush } from './push.js';
+
+// اللغة قبل أي شي ثاني عشان الصفحة تطلع باللغة الصح من أول لحظة
+startI18n();
+const LOC = LANG === 'en' ? 'en' : 'ar';
 
 const RES = { 720: [1280, 720], 1080: [1920, 1080], 1440: [2560, 1440], 2160: [3840, 2160] };
 const PRESETS = [
@@ -391,7 +396,7 @@ function handle(m) {
       if (appNotifySupported() && settings.notify && document.hidden && m.notif.kind !== 'mention') {
         const n = m.notif, who = n.actor?.display || '';
         const text = n.kind === 'join' ? `${who} دخل قروبك` : n.kind === 'live' ? `${who} بدأ يبث الحين` : n.kind === 'report' ? `بلاغ جديد من ${who}` : n.text;
-        appNotify('PLAY WTW', text, { notif: n.id });
+        appNotify('PLAY WTW', tr(text), { notif: n.id });
       }
       break;
     }
@@ -562,7 +567,7 @@ function staffRows() {
     if (dm?.preview) return '';
     return `<div class="dm-row staff-row" role="button" tabindex="0" data-dm-user="${esc(u.id)}">
       <span class="dm-ava">${avatar(u, 'md')}<i class="st${S.online.has(u.id) ? ' on' : ''}"></i></span>
-      <span class="dm-main"><b class="dm-name">${esc(u.display)}${vb(u)}</b><span class="dm-sub">الدعم الفني · راسلنا لأي مشكلة أو اقتراح</span></span>
+      <span class="dm-main"><b class="dm-name">${esc(u.display)}${vb(u)}</b><span class="dm-sub" data-tr>الدعم الفني · راسلنا لأي مشكلة أو اقتراح</span></span>
       <span class="dm-side"><span class="staff-tag">رسمي</span></span>
     </div>`;
   }).join('');
@@ -797,13 +802,13 @@ function renderMessages(scrollToEnd) {
     const u = userOf(m.uid);
     const day = new Date(m.ts).toDateString();
     if (!prev || new Date(prev.ts).toDateString() !== day) {
-      html += `<div class="day-sep"><span>${new Date(m.ts).toLocaleDateString('ar', { weekday: 'long', day: 'numeric', month: 'long' })}</span></div>`;
+      html += `<div class="day-sep"><span>${new Date(m.ts).toLocaleDateString(LOC, { weekday: 'long', day: 'numeric', month: 'long' })}</span></div>`;
       prev = null;
     }
     const cont = prev && prev.uid === m.uid && m.ts - prev.ts < 5 * 60000;
     html += `<div class="msg${cont ? ' cont' : ''}${m.pending ? ' pending' : ''}${m.uid !== S.me.id && mentionsMe(m) ? ' mentioned' : ''}" data-msg="${esc(m.id)}">
       ${m.pending ? '' : `<button class="msg-more" type="button" title="خيارات الرسالة" data-pop>${I.more}</button>`}
-      ${cont ? `<span class="msg-time-h">${new Date(m.ts).toLocaleTimeString('ar', { hour: 'numeric', minute: '2-digit' })}</span>` : avatar(u)}
+      ${cont ? `<span class="msg-time-h">${new Date(m.ts).toLocaleTimeString(LOC, { hour: 'numeric', minute: '2-digit' })}</span>` : avatar(u)}
       <div class="msg-body">
         ${cont ? '' : `<div class="msg-meta"><b style="--h:${u.hue}">${esc(u.display)}${vb(u)}</b><time>${timeLabel(m.ts)}</time></div>`}
         ${m.text ? `<div class="msg-text">${renderText(m.text, findChannel(id)?.server)}</div>` : ''}
@@ -1964,6 +1969,7 @@ async function openSettings() {
   } else if (!('Notification' in window)) $('#notifyHint').textContent = 'متصفحك ما يدعم الإشعارات. في الآيفون: أضف الموقع للشاشة الرئيسية أول.';
   $$('#settingsModal input[name=fontScale]').forEach((r) => { r.checked = r.value === settings.fontScale; });
   $$('#settingsModal input[name=theme]').forEach((r) => { r.checked = r.value === settings.theme; });
+  $$('#settingsModal input[name=lang]').forEach((r) => { r.checked = r.value === LANG; });
   $('#optReduceMotion').checked = settings.reduceMotion;
   $('#optPtt').checked = settings.ptt;
   $('#pttKeyBtn').textContent = keyLabel(settings.pttKey);
@@ -2045,6 +2051,7 @@ $('#settingsModal').addEventListener('change', async (e) => {
     $('#optNotifyAll').disabled = !t.checked;
     saveSettings();
   } else if (t.id === 'optNotifyAll') { settings.notifyAll = t.checked; saveSettings(); }
+  else if (t.name === 'lang') { if (t.value !== LANG) setLang(t.value); }
   else if (t.name === 'theme') { settings.theme = t.value; saveSettings(); applyLook(); }
   else if (t.name === 'fontScale') { settings.fontScale = t.value; saveSettings(); applyLook(); }
   else if (t.id === 'optReduceMotion') { settings.reduceMotion = t.checked; saveSettings(); applyLook(); }
@@ -2307,7 +2314,7 @@ function notifyMessage(msg, mentioned) {
     const f = findChannel(msg.channel);
     const u = userOf(msg.uid);
     const title = f?.channel.kind === 'dm' ? u.display : `${u.display}${mentioned ? ' منشنك' : ''} في #${f?.channel.name || ''}`;
-    appNotify(title, msg.text || (msg.file ? '📷 صورة' : ''), { channel: msg.channel });
+    appNotify(tr(title), msg.text || tr(msg.file ? '📷 صورة' : ''), { channel: msg.channel });
     return;
   }
   if (!settings.notify || !('Notification' in window) || Notification.permission !== 'granted') return;
@@ -2317,11 +2324,11 @@ function notifyMessage(msg, mentioned) {
   const f = findChannel(msg.channel);
   const u = userOf(msg.uid);
   try {
-    const n = new Notification(f?.channel.kind === 'dm' ? u.display : `${u.display} ${mentioned ? 'منشنك' : ''} في #${f?.channel.name || ''}`, {
+    const n = new Notification(f?.channel.kind === 'dm' ? u.display : tr(`${u.display}${mentioned ? ' منشنك' : ''} في #${f?.channel.name || ''}`), {
       body: msg.text.length > 140 ? msg.text.slice(0, 140) + '…' : msg.text,
       tag: msg.channel,
       icon: '/icon-192.png',
-      lang: 'ar', dir: 'rtl',
+      lang: LOC, dir: LOC === 'ar' ? 'rtl' : 'ltr',
     });
     n.onclick = () => { focus(); openChannel(msg.channel); n.close(); };
   } catch { /* بعض الجوالات ما تدعم الإشعار من الصفحة */ }
@@ -3186,3 +3193,8 @@ $('#contactLinks').addEventListener('click', (e) => {
   const b = e.target.closest('[data-dm-user]');
   if (b) startDm({ userId: b.dataset.dmUser });
 });
+
+// زر اللغة في الشاشة الافتتاحية وصفحة الدخول
+$('#langBtn').textContent = LANG === 'en' ? 'العربية' : 'English';
+$('#langBtn').setAttribute('aria-label', LANG === 'en' ? 'التبديل للعربية' : 'Switch to English');
+$('#langBtn').addEventListener('click', () => setLang(LANG === 'en' ? 'ar' : 'en'));

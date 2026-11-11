@@ -1,4 +1,6 @@
 /* أدوات مشتركة */
+import { LANG } from './i18n.js';
+const LOC = LANG === 'en' ? 'en' : 'ar';
 
 const svg = (p) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${p}</svg>`;
 export const I = {
@@ -85,11 +87,11 @@ export function timeAgo(ts) {
 
 export function timeLabel(ts) {
   const d = new Date(ts), now = new Date();
-  const t = d.toLocaleTimeString('ar', { hour: 'numeric', minute: '2-digit' });
+  const t = d.toLocaleTimeString(LOC, { hour: 'numeric', minute: '2-digit' });
   if (d.toDateString() === now.toDateString()) return `اليوم ${t}`;
   const y = new Date(now); y.setDate(now.getDate() - 1);
   if (d.toDateString() === y.toDateString()) return `أمس ${t}`;
-  return `${d.toLocaleDateString('ar', { day: 'numeric', month: 'short' })} ${t}`;
+  return `${d.toLocaleDateString(LOC, { day: 'numeric', month: 'short' })} ${t}`;
 }
 
 export const store = {

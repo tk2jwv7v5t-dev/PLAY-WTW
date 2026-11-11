@@ -92,6 +92,9 @@
     </div>
   </section>
 
+  <!-- زر اللغة في الشاشة الافتتاحية وصفحة الدخول -->
+  <button id="langBtn" class="lang-btn" type="button" data-no-tr></button>
+
   <!-- ================= التطبيق ================= -->
   <div id="app" class="app hidden">
     <!-- شريط القروبات -->
@@ -221,7 +224,7 @@
         </div>
         <button id="callInvite" class="call-invite hidden" type="button">
           <span class="ci-icon" data-icon="userPlus"></span>
-          <span class="ci-text"><b>ادعُ ربعك للروم</b><small>خلّ القروب يدري إنك هنا</small></span>
+          <span class="ci-text"><b>ارسل دعوة</b></span>
           <span class="ci-go" data-icon="arrow"></span>
         </button>
         <nav id="dock" class="dock hidden" aria-label="التحكم">
@@ -508,6 +511,13 @@
       </div>
 
       <div class="pane hidden" data-pane="look">
+        <div class="field">
+          <span class="label">اللغة</span>
+          <div class="seg">
+            <label><input type="radio" name="lang" value="ar"><span data-no-tr>العربية</span></label>
+            <label><input type="radio" name="lang" value="en"><span>English</span></label>
+          </div>
+        </div>
         <div class="field">
           <span class="label">الشكل</span>
           <div class="seg">

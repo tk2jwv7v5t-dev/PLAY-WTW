@@ -1480,3 +1480,33 @@ button.hl-row:hover, .hl-row:has(button:hover) { background: var(--bg-3); }
   /* عدد فردي: آخر كرت ياخذ العرض كامل */
   :root .app.in-call .tiles:has(.tile:nth-child(3)) .tile:last-child:nth-child(odd) { grid-column: 1 / -1; }
 }
+
+/* =====================================================
+   اللغة: زر التبديل، وتعديلات الإنجليزي (من اليسار لليمين)
+   ===================================================== */
+.lang-btn {
+  position: fixed; z-index: 70; top: calc(14px + env(safe-area-inset-top)); inset-inline-end: 14px;
+  padding: 8px 14px; border-radius: 999px; font-size: 14px; font-weight: 700;
+  color: #fff; background: rgba(255, 255, 255, .14); border: 1px solid rgba(255, 255, 255, .28);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+}
+.lang-btn:hover { background: rgba(255, 255, 255, .22); }
+body:has(#app:not(.hidden)) .lang-btn { display: none; }
+:root[data-theme="light"] body:has(#intro.hidden) .lang-btn { color: var(--text); background: rgba(255, 255, 255, .7); border-color: rgba(24, 32, 52, .12); }
+
+/* نصوص مكتوبة في التصميم نفسه */
+:root[lang="en"] .app.offline::before { content: "Connection lost… reconnecting"; }
+:root[lang="en"] .screen-tile.loading::after { content: "Loading stream…"; }
+:root[lang="en"] .screen-tile.video-off::before { content: "Video off for you — audio only"; }
+:root[lang="en"] .text-view.drop::after { content: "Drop the photo here to send it"; }
+
+/* الأسهم: رجوع لليسار، وأسهم الصفوف لليمين */
+:root[dir="ltr"] #navToggle svg.i { transform: none; }
+:root[dir="ltr"] .you-go svg.i, :root[dir="ltr"] .ci-go svg.i { transform: scaleX(-1); }
+@media (max-width: 900px) {
+  /* لوحة الأعضاء تجي من اليمين في الإنجليزي */
+  :root[dir="ltr"] .members-panel { transform: translateX(100%); }
+  :root[dir="ltr"] .app.members-open .members-panel { transform: none; }
+  :root[dir="ltr"] .rail, :root[dir="ltr"] .sidebar { transform: translateX(-100vw); }
+  :root[dir="ltr"] .app.nav-open .rail, :root[dir="ltr"] .app.nav-open .sidebar { transform: none; }
+}
