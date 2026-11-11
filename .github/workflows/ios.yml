@@ -18,7 +18,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write  # عشان ننشر ملف الـ IPA في Releases
 
 concurrency:
   group: ios-build
@@ -135,6 +135,22 @@ jobs:
           cp -R "$RUNNER_TEMP/App.xcarchive/Products/Applications/App.app" "$RUNNER_TEMP/ipa/Payload/"
           (cd "$RUNNER_TEMP/ipa" && zip -qry PLAY-WTW-unsigned.ipa Payload)
           echo "ℹ️ البناء سليم. ما فيه أسرار توقيع للحين، فما انرفع على TestFlight." >> "$GITHUB_STEP_SUMMARY"
+
+      # رابط ثابت للتحميل من الجوال (لـ TrollStore): نفس الإصدار يتحدّث مع كل بناء
+      - name: نشر الـ IPA للتحميل المباشر
+        if: env.HAS_SIGNING != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp "$RUNNER_TEMP/ipa/PLAY-WTW-unsigned.ipa" "$RUNNER_TEMP/ipa/PLAY-WTW.ipa"
+          NOTES="نسخة رقم $BUILD_NUMBER بدون توقيع، للتثبيت عن طريق TrollStore (iOS 15.0 لين 16.6.1، و16.7 RC، و17.0)."
+          if gh release view ios-latest >/dev/null 2>&1; then
+            gh release upload ios-latest "$RUNNER_TEMP/ipa/PLAY-WTW.ipa" --clobber
+            gh release edit ios-latest --notes "$NOTES"
+          else
+            gh release create ios-latest "$RUNNER_TEMP/ipa/PLAY-WTW.ipa" --title "PLAY WTW للآيفون" --notes "$NOTES" --target "$GITHUB_SHA"
+          fi
+          echo "📲 رابط التحميل: https://github.com/${GITHUB_REPOSITORY}/releases/download/ios-latest/PLAY-WTW.ipa" >> "$GITHUB_STEP_SUMMARY"
 
       - name: حفظ النسخة بدون توقيع
         if: env.HAS_SIGNING != 'true'
