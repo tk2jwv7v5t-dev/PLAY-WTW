@@ -1,0 +1,15 @@
+{
+  "appId": "com.playwtw.app",
+  "appName": "PLAY WTW",
+  "webDir": "www",
+  "server": {
+    "url": "https://play-wtw.tk2jwv7v5t.workers.dev",
+    "errorPath": "offline.html"
+  },
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#e8eaee",
+    "limitsNavigationsToAppBoundDomains": false,
+    "scrollEnabled": true
+  }
+}

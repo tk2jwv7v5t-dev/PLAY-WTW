@@ -6,7 +6,7 @@ import { startIntro } from './intro.js';
 import { MicPipeline, LevelWatcher } from './audio.js';
 import { VoiceSession } from './voice.js';
 import { SUPPORT } from './config.js';
-import { pushSupported, isIOS, isStandalone, registerWorker, currentSubscription, enablePush, disablePush, testPush } from './push.js';
+import { pushSupported, isIOS, isStandalone, inApp, registerWorker, currentSubscription, enablePush, disablePush, testPush } from './push.js';
 
 const RES = { 720: [1280, 720], 1080: [1920, 1080], 1440: [2560, 1440], 2160: [3840, 2160] };
 const PRESETS = [
@@ -80,7 +80,12 @@ fillIcons();
 autoLabel();
 let introCtl = null;
 const meReq = fetch('/api/me', { credentials: 'same-origin' }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
-meReq.then((d) => { if (d?.user) $('#introGoText').textContent = `ادخل يا ${d.user.display}`; });
+meReq.then((d) => {
+  if (!d?.user) return;
+  $('#introGoText').textContent = `ادخل يا ${d.user.display}`;
+  // داخل التطبيق: لو مسجّل دخول ندخله على طول بدون الشاشة الافتتاحية
+  if (inApp()) $('#introGo').click();
+});
 introCtl = startIntro({
   onGo: async () => {
     const d = await meReq;
@@ -2505,12 +2510,13 @@ $('#mentionBox').addEventListener('click', (e) => {
 /* ---- إشعارات الجهاز (والموقع مسكّر) ---- */
 async function refreshPushUI() {
   const box = $('#optPush'), hint = $('#pushHint');
-  const iosNeedsInstall = isIOS() && !isStandalone();
+  const iosNeedsInstall = isIOS() && !isStandalone() && !inApp();
   $('#iosHelp').classList.toggle('hidden', !iosNeedsInstall);
-  if (iosNeedsInstall || !pushSupported()) {
+  if (inApp() || iosNeedsInstall || !pushSupported()) {
     box.checked = false;
     box.disabled = true;
-    if (!iosNeedsInstall) hint.textContent = ERRORS.push_unsupported;
+    if (inApp()) hint.textContent = 'إشعارات الجوال داخل التطبيق جاية في تحديث قادم. الرسايل توصلك وانت فاتح التطبيق.';
+    else if (!iosNeedsInstall) hint.textContent = ERRORS.push_unsupported;
     $('#pushTest').hidden = true;
     return;
   }

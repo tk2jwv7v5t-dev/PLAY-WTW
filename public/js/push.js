@@ -5,6 +5,9 @@ export const pushSupported = () => 'serviceWorker' in navigator && 'PushManager'
 export const isIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 export const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 
+// داخل تطبيق الآيفون (Capacitor)
+export const inApp = () => !!window.Capacitor?.isNativePlatform?.();
+
 let regPromise = null;
 export function registerWorker() {
   if (!('serviceWorker' in navigator)) return Promise.resolve(null);

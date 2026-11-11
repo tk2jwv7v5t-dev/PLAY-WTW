@@ -1,0 +1,15 @@
+{
+  "name": "play-wtw-ios",
+  "private": true,
+  "description": "تطبيق الآيفون لـ PLAY WTW (يفتح الموقع داخل التطبيق)",
+  "scripts": {
+    "sync": "cap sync ios"
+  },
+  "dependencies": {
+    "@capacitor/core": "8.5.3",
+    "@capacitor/ios": "8.5.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.3"
+  }
+}

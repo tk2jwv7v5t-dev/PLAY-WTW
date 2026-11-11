@@ -1393,3 +1393,9 @@ button.hl-row:hover, .hl-row:has(button:hover) { background: var(--bg-3); }
 /* أزرار وعناوين البث فوق الفيديو: دايم فاتحة عشان تبان على الخلفية الغامقة */
 :root[data-theme="light"] .screen-tile :is(.tile-btn, .chip:not(.live)) { color: #fff; }
 :root[data-theme="light"] .screen-tile .tile-btn.danger { color: #fff; }
+
+/* الشاشة الرئيسية وتطبيق الآيفون: نبعد المحتوى عن النوتش وشريط الساعة */
+.app { top: env(safe-area-inset-top); }
+@media (max-width: 900px) {
+  .rail, .sidebar, .members-panel, .m-screen { top: env(safe-area-inset-top); }
+}
