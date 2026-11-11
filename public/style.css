@@ -1510,3 +1510,6 @@ body:has(#app:not(.hidden)) .lang-btn { display: none; }
   :root[dir="ltr"] .rail, :root[dir="ltr"] .sidebar { transform: translateX(-100vw); }
   :root[dir="ltr"] .app.nav-open .rail, :root[dir="ltr"] .app.nav-open .sidebar { transform: none; }
 }
+
+/* بث شاشة جوال: صورة بس، بدون صوت أو اختيار جودة */
+.screen-tile.is-relay :is([data-act=mute], .tile-vol, .q-btn) { display: none; }

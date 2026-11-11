@@ -83,9 +83,9 @@ jobs:
             -authenticationKeyIssuerID "$ISSUER" \
             DEVELOPMENT_TEAM="$TEAM" \
             CODE_SIGN_STYLE=Automatic \
-            PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
+            APP_BUNDLE_ID="$BUNDLE_ID" \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
-            | tail -n 60
+            2>&1 | tee "$RUNNER_TEMP/build.log" | tail -n 60
           test -d "$RUNNER_TEMP/App.xcarchive"
 
       - name: رفع على TestFlight
@@ -129,9 +129,17 @@ jobs:
             -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/App.xcarchive" \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
-            PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
+            APP_BUNDLE_ID="$BUNDLE_ID" \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
-            | tail -n 60
+            2>&1 | tee "$RUNNER_TEMP/build.log" | tail -n 60
+          # توقيع محلي مع الصلاحيات (TrollStore يحافظ عليها): المكان المشترك بين التطبيق وجزء بث الشاشة
+          APPDIR="$RUNNER_TEMP/App.xcarchive/Products/Applications/App.app"
+          sed "s/\$(APP_BUNDLE_ID)/$BUNDLE_ID/g" App/App.entitlements > "$RUNNER_TEMP/app.ent"
+          sed "s/\$(APP_BUNDLE_ID)/$BUNDLE_ID/g" ScreenShare/ScreenShare.entitlements > "$RUNNER_TEMP/ext.ent"
+          if [ -d "$APPDIR/Frameworks" ]; then for f in "$APPDIR"/Frameworks/*; do codesign -f -s - "$f"; done; fi
+          codesign -f -s - --entitlements "$RUNNER_TEMP/ext.ent" "$APPDIR/PlugIns/ScreenShare.appex"
+          codesign -f -s - --entitlements "$RUNNER_TEMP/app.ent" "$APPDIR"
+          codesign -d --entitlements - "$APPDIR/PlugIns/ScreenShare.appex" || true
           mkdir -p "$RUNNER_TEMP/ipa/Payload"
           cp -R "$RUNNER_TEMP/App.xcarchive/Products/Applications/App.app" "$RUNNER_TEMP/ipa/Payload/"
           (cd "$RUNNER_TEMP/ipa" && zip -qry PLAY-WTW-unsigned.ipa Payload)
@@ -160,6 +168,17 @@ jobs:
           name: PLAY-WTW-unsigned-ipa
           path: ${{ runner.temp }}/ipa/PLAY-WTW-unsigned.ipa
           retention-days: 14
+
+      - name: نشر أخطاء البناء
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          LOG="$RUNNER_TEMP/build.log"
+          [ -f "$LOG" ] || echo "no build log" > "$LOG"
+          { echo "run $BUILD_NUMBER"; grep -E "error:|BUILD FAILED|ARCHIVE FAILED|\*\* .* FAILED" -B2 -A4 "$LOG" | head -n 300; echo '--- tail ---'; tail -n 120 "$LOG"; } > "$RUNNER_TEMP/build-errors.txt"
+          gh release view ios-build-log >/dev/null 2>&1 || gh release create ios-build-log --title "iOS build log" --notes "آخر أخطاء بناء التطبيق" --prerelease --target "$GITHUB_SHA"
+          gh release upload ios-build-log "$RUNNER_TEMP/build-errors.txt" --clobber
 
       - name: تنظيف المفتاح
         if: always()

@@ -174,6 +174,7 @@ export class Hub extends DurableObject {
     try {
       this.site ??= url.origin;
       if (route === 'GET /api/ws') return this.openSocket(req, url);
+      if (route === 'GET /api/screen/ws') return this.openRelay(req, url);
       if (route === 'GET /api/push/key') {
         if (!(await this.authed(req))) return fail('unauthorized', 401);
         return json({ key: (await this.vapid()).publicB64 });
@@ -205,6 +206,7 @@ export class Hub extends DurableObject {
         if (route === 'POST /api/push/subscribe') return this.pushSubscribe(req);
         if (route === 'POST /api/push/unsubscribe') return this.pushUnsubscribe(req);
         if (route === 'POST /api/push/test') return this.pushTest(req);
+        if (route === 'POST /api/screen/start') return this.screenStart(req, url);
       }
       return fail('not_found', 404);
     } catch (e) {
@@ -841,9 +843,90 @@ export class Hub extends DurableObject {
     const out = [];
     for (const ws of this.ctx.getWebSockets()) {
       const att = ws.deserializeAttachment();
-      if (att && !att.gone) out.push({ ws, att });
+      if (att && !att.gone && !att.relay) out.push({ ws, att });
     }
     return out;
+  }
+
+  /* ---------- بث شاشة الجوال (من تطبيق الآيفون) ----------
+     التطبيق يطلب رمز لمرة وحدة، وجزء البث في الآيفون يفتح فيه اتصال ويرسل صور الشاشة،
+     والسيرفر يوصلها بس للي في نفس الروم الصوتي. */
+  relaySockets() {
+    const out = [];
+    for (const ws of this.ctx.getWebSockets()) {
+      const att = ws.deserializeAttachment();
+      if (att && !att.gone && att.relay) out.push({ ws, att });
+    }
+    return out;
+  }
+  relayState(att, on = true) {
+    return { sid: att.sid, uid: att.uid, channel: att.voice, on };
+  }
+  relayBroadcast(att, on) {
+    const ch = this.channel(att.voice);
+    if (ch) this.toServer(ch.server_id, { t: 'relay', state: this.relayState(att, on) });
+  }
+  inVoice(uid, channelId) {
+    return this.sockets().some((s) => s.att.uid === uid && s.att.voice === channelId);
+  }
+  closeRelays(uid, channelId = null) {
+    for (const r of this.relaySockets()) {
+      if (r.att.uid !== uid || (channelId && r.att.voice !== channelId)) continue;
+      this.dropSocket(r.ws);
+      try { r.ws.close(4000, 'stopped'); } catch { /* تسكر */ }
+    }
+  }
+  async screenStart(req, url) {
+    const user = await this.authed(req);
+    if (!user) return fail('unauthorized', 401);
+    const b = await this.body(req);
+    const channelId = asId(b.channelId);
+    if (!channelId || !this.inVoice(user.id, channelId)) return fail('forbidden', 403);
+    this.closeRelays(user.id);
+    const token = b64url(randomBytes(24));
+    this.screenTokens ??= new Map();
+    const now = Date.now();
+    for (const [k, v] of this.screenTokens) if (v.exp < now) this.screenTokens.delete(k);
+    this.screenTokens.set(token, { uid: user.id, channel: channelId, exp: now + 120000 });
+    return json({ token, url: url.origin.replace(/^http/, 'ws') + '/api/screen/ws' });
+  }
+  async openRelay(req, url) {
+    if (req.headers.get('upgrade') !== 'websocket') return fail('expected_websocket', 426);
+    const token = String(url.searchParams.get('token') || '');
+    const t = this.screenTokens?.get(token);
+    this.screenTokens?.delete(token);
+    if (!t || t.exp < Date.now() || !this.inVoice(t.uid, t.channel)) return fail('unauthorized', 401);
+    const user = this.sql.exec('SELECT * FROM users WHERE id = ? AND suspended = 0', t.uid).toArray()[0];
+    if (!user) return fail('unauthorized', 401);
+    this.closeRelays(t.uid);
+    const pair = new WebSocketPair();
+    const att = { relay: true, sid: 'r' + b64url(randomBytes(6)), uid: t.uid, voice: t.channel, screen: 'phone', last: 0, check: Date.now() };
+    this.ctx.acceptWebSocket(pair[1]);
+    pair[1].serializeAttachment(att);
+    this.relayBroadcast(att, true);
+    this.notifyLive({ voice: t.channel, screen: 'screen' }, user);
+    return new Response(null, { status: 101, webSocket: pair[0] });
+  }
+  relayFrame(ws, att, data) {
+    const now = Date.now();
+    // لين 15 صورة بالثانية، وكل صورة أقل من 700 كيلو
+    if (data.byteLength > 700 * 1024 || now - att.last < 60) return;
+    att.last = now;
+    // كل ثانيتين نتأكد إن صاحبه للحين في الروم
+    if (now - att.check > 2000) {
+      att.check = now;
+      if (!this.inVoice(att.uid, att.voice)) { this.dropSocket(ws); try { ws.close(4000, 'left'); } catch { /* */ } return; }
+    }
+    ws.serializeAttachment(att);
+    const head = new TextEncoder().encode(att.sid.padEnd(12, ' ').slice(0, 12));
+    const out = new Uint8Array(12 + data.byteLength);
+    out.set(head, 0);
+    out.set(new Uint8Array(data), 12);
+    for (const s of this.sockets()) {
+      if (s.att.voice !== att.voice || s.att.uid === att.uid) continue;
+      if (s.att.relayOff?.includes(att.sid)) continue;
+      try { s.ws.send(out); } catch { /* تسكر */ }
+    }
   }
   send(ws, msg) {
     try { ws.send(JSON.stringify(msg)); } catch { /* السوكت تسكر */ }
@@ -896,6 +979,7 @@ export class Hub extends DurableObject {
     const reports = Object.fromEntries(servers.filter((s) => s.owner === user.id).map((s) => [s.id, this.openReports(s.id)]));
     return {
       t: 'ready', me: { ...this.publicUser(user), admin: this.isAdmin(user) }, sid, servers, online, voice: this.voiceStates(channelIds), prefs,
+      relays: this.relaySockets().filter((r) => channelIds.includes(r.att.voice)).map((r) => this.relayState(r.att)),
       adminCount: this.isAdmin(user) ? this.adminOpenCount() : 0,
       notifs: this.notifList(user.id), dms, blocks: this.blockList(user.id), reports, staff: this.staffList(),
     };
@@ -912,11 +996,16 @@ export class Hub extends DurableObject {
   }
 
   async webSocketMessage(ws, raw) {
-    if (typeof raw !== 'string' || raw.length > 65536) return;
+    if (typeof raw !== 'string') {
+      const a = ws.deserializeAttachment();
+      if (a?.relay && !a.gone && raw instanceof ArrayBuffer) this.relayFrame(ws, a, raw);
+      return;
+    }
+    if (raw.length > 65536) return;
     let m;
     try { m = JSON.parse(raw); } catch { return; }
     const att = ws.deserializeAttachment();
-    if (!att || !m || typeof m !== 'object' || typeof m.t !== 'string') return;
+    if (!att || att.relay || !m || typeof m !== 'object' || typeof m.t !== 'string') return;
     // حد عام: 300 رسالة كل 10 ثواني (الاتصال بين الأجهزة يرسل كثير وقت البداية)
     const now = Date.now();
     if (!att.win || now - att.win > 10000) { att.win = now; att.count = 0; }
@@ -1222,6 +1311,18 @@ export class Hub extends DurableObject {
         this.setVoice(ws, att, ch.id);
         return;
       }
+      case 'relay.pref': {
+        // ما يبي يستقبل صورة بث شاشة جوال معيّن (يوفّر نت)
+        const sid = clean(m.sid, 16);
+        const off = new Set(att.relayOff || []);
+        if (m.off) off.add(sid); else off.delete(sid);
+        att.relayOff = [...off].slice(-10);
+        ws.serializeAttachment(att);
+        return;
+      }
+      case 'relay.stop':
+        this.closeRelays(att.uid);
+        return;
       case 'voice.leave':
         att.sharing = false; att.screen = null;
         this.setVoice(ws, att, null);
@@ -1293,6 +1394,7 @@ export class Hub extends DurableObject {
     att.voice = channelId;
     ws.serializeAttachment(att);
     this.voiceBroadcast(att, [old, channelId]);
+    if (old && old !== channelId && !this.inVoice(att.uid, old)) this.closeRelays(att.uid, old);
   }
 
   // نرسل حالة الصوت لكل أعضاء القروبات اللي فيها الروم القديم والجديد
@@ -1334,6 +1436,11 @@ export class Hub extends DurableObject {
     const att = ws.deserializeAttachment();
     if (!att || att.gone) return;
     att.gone = true;
+    if (att.relay) {
+      ws.serializeAttachment(att);
+      this.relayBroadcast(att, false);
+      return;
+    }
     if (att.voice) {
       const old = att.voice;
       att.voice = null; att.sharing = false; att.screen = null;

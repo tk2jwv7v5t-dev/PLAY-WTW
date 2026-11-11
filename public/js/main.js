@@ -39,6 +39,7 @@ const S = {
   users: new Map(),     // uid -> user
   online: new Set(),
   voice: new Map(),     // sid -> { sid, uid, channel, mic, deaf, sharing }
+  relays: new Map(),    // sid -> { sid, uid, channel }: بث شاشة جوال من تطبيق الآيفون
   cur: { server: null, channel: null },
   lastChannel: store.get('lastChannel', {}),
   msgs: new Map(),      // channelId -> { list, loaded, more, loading }
@@ -177,7 +178,11 @@ function connect() {
   S.ws = ws;
   let opened = false;
   ws.onopen = () => { opened = true; S.wsOpen = true; S.retry = 0; setConn(true); };
-  ws.onmessage = (e) => { if (e.data !== 'pong') handle(JSON.parse(e.data)); };
+  ws.binaryType = 'arraybuffer';
+  ws.onmessage = (e) => {
+    if (e.data instanceof ArrayBuffer) { onRelayFrame(e.data); return; }
+    if (e.data !== 'pong') handle(JSON.parse(e.data));
+  };
   ws.onclose = async (e) => {
     if (S.ws !== ws) return;
     S.wsOpen = false;
@@ -247,6 +252,8 @@ function handle(m) {
       m.servers.forEach(addServer);
       S.online = new Set(m.online);
       S.voice = new Map(m.voice.map((v) => [v.sid, v]));
+      for (const sid of S.relays.keys()) if (!(m.relays || []).some((r) => r.sid === sid)) stopRelay(sid);
+      S.relays = new Map((m.relays || []).map((r) => [r.sid, r]));
       if (!S.servers.has(S.cur.server)) S.cur.server = store.get('lastServer', null);
       if (!S.servers.has(S.cur.server)) S.cur.server = S.servers.keys().next().value || null;
       S.prefs = m.prefs || {};
@@ -349,6 +356,12 @@ function handle(m) {
       break;
     }
     case 'voice': onVoiceState(m.state); break;
+    case 'relay': {
+      if (m.state.on) S.relays.set(m.state.sid, m.state);
+      else { S.relays.delete(m.state.sid); stopRelay(m.state.sid); }
+      renderSidebar(); renderVoiceViewIfOpen(); renderUserPanel(); refreshHome();
+      break;
+    }
     case 'presence': {
       m.online ? S.online.add(m.uid) : S.online.delete(m.uid);
       renderMembers();
@@ -607,7 +620,7 @@ function channelRow(c) {
     const speaking = me ? mic.speaking : levels.speaking(v.sid);
     return `<div class="vc-user${speaking ? ' speaking' : ''}${me ? '' : ' clickable'}" data-speak="${me ? 'me' : v.sid}"${me ? '' : ` data-user="${v.uid}" data-pop`}>
       ${avatar(u, 'xs')}<span>${esc(u.display)}${vb(u)}</span>
-      <span class="vc-icons">${v.sharing ? '<b class="live-tag">LIVE</b>' : ''}${settings.userMute[v.uid] ? `<i class="local-mute" title="مكتوم عندك">${I.volumeOff}</i>` : ''}${!v.mic ? I.micOff : ''}${v.deaf ? I.headphonesOff : ''}</span>
+      <span class="vc-icons">${v.sharing || phoneLive(v.uid, c.id) ? '<b class="live-tag">LIVE</b>' : ''}${settings.userMute[v.uid] ? `<i class="local-mute" title="مكتوم عندك">${I.volumeOff}</i>` : ''}${!v.mic ? I.micOff : ''}${v.deaf ? I.headphonesOff : ''}</span>
     </div>`;
   }).join('')}</div>`;
 }
@@ -688,7 +701,7 @@ function renderUserPanel() {
   const camOnly = !canScreen() && canCamera();
   for (const b of [$('#dShare'), $('#vpShare')]) {
     b.innerHTML = S.screen ? I.monitorOff : camOnly ? I.camera : I.monitor;
-    b.classList.toggle('live', !!S.screen);
+    b.classList.toggle('live', !!S.screen || phoneLive(S.me?.id));
     b.title = S.screen ? 'وقف البث' : camOnly ? 'بث الكاميرا' : 'بث الشاشة أو الكاميرا';
     b.setAttribute('aria-label', b.title);
   }
@@ -1108,11 +1121,20 @@ function renderVoiceView(c) {
       if (p?.remoteScreen) { want.add(v.sid); ensureTile(v.sid, p.remoteScreen, false); }
     }
   }
+  // بث شاشة جوال (من تطبيق الآيفون) يجي صور عن طريق السيرفر
+  if (inThis) {
+    for (const r of S.relays.values()) {
+      if (r.channel === c.id && r.uid !== S.me.id) { want.add(r.sid); ensureTile(r.sid, relayStream(r.sid), false); }
+    }
+  }
   for (const sid of [...S.tiles.keys()]) if (!want.has(sid)) removeTile(sid);
   for (const [sid, t] of S.tiles) {
     const v = S.voice.get(sid);
+    const rl = S.relays.get(sid);
     const cam = (sid === S.sid ? S.shareKind : v?.screen) === 'camera';
-    $('.tile-who', t.el).textContent = sid === S.sid ? (cam ? 'كاميرتك' : 'شاشتك') : `${userOf(v?.uid).display} ${cam ? 'يبث كاميرته' : 'يبث'}`;
+    t.el.classList.toggle('is-relay', !!rl);
+    $('.tile-who', t.el).textContent = rl ? `${userOf(rl.uid).display} يبث شاشة جواله`
+      : sid === S.sid ? (cam ? 'كاميرتك' : 'شاشتك') : `${userOf(v?.uid).display} ${cam ? 'يبث كاميرته' : 'يبث'}`;
     t.el.classList.toggle('focused', S.focus === sid);
   }
   $('#screens').classList.toggle('has-focus', !!S.focus && S.tiles.has(S.focus));
@@ -1473,27 +1495,82 @@ const CAM_CFG = { res: '720', fps: 30, mode: 'motion', brAuto: false, br: 2.5, a
 
 function shareClicked(anchor) {
   if (S.screen) { stopShare(); return; }
+  if (phoneLive(S.me.id)) { send({ t: 'relay.stop' }); toast('وقّفنا بث شاشة الجوال'); return; }
   if (!S.myVoice) { toast('ادخل روم صوتي أول عشان تبث'); return; }
   // الكمبيوتر: بث الشاشة مباشرة مثل قبل
   if (canScreen() && !touchDevice()) { startShare(); return; }
   const opts = [];
-  if (canScreen()) opts.push(['screen', I.monitor, 'شاشة الجوال', 'كل اللي قدامك على الشاشة']);
+  const nativeScreen = !!window.Capacitor?.Plugins?.ScreenShare;
+  if (nativeScreen) opts.push(['phone', I.monitor, 'شاشة الجوال', 'كل اللي قدامك، حتى لو طلعت من التطبيق']);
+  else if (canScreen()) opts.push(['screen', I.monitor, 'شاشة الجوال', 'كل اللي قدامك على الشاشة']);
   if (canCamera()) {
     opts.push(['back', I.camera, 'الكاميرا الخلفية', 'اللي قدامك، مثل التصوير']);
     opts.push(['front', I.camera, 'الكاميرا الأمامية', 'وجهك']);
   }
   if (!opts.length) { toast('متصفحك ما يدعم البث. جرّب كروم أو سفاري بآخر تحديث.', 'err'); return; }
-  const note = canScreen() ? '' : '<p class="pop-note">متصفحات الآيفون وأغلب الجوالات ما تسمح للمواقع تبث الشاشة، فتقدر تبث الكاميرا بدالها.</p>';
+  const note = canScreen() || nativeScreen ? '' : '<p class="pop-note">متصفحات الآيفون وأغلب الجوالات ما تسمح للمواقع تبث الشاشة، فتقدر تبث الكاميرا بدالها.</p>';
   openPop(anchor, `<div class="pop-title">وش تبي تبث؟</div>${opts.map(([k, icon, label, sub]) =>
     `<button type="button" class="pop-opt row share-opt" data-share="${k}">${icon}<span><b>${label}</b><small>${sub}</small></span></button>`).join('')}${note}`, (pop) => {
     pop.onclick = (e) => {
       const b = e.target.closest('[data-share]');
       if (!b) return;
       closePop();
-      if (b.dataset.share === 'screen') startShare();
+      if (b.dataset.share === 'phone') startPhoneScreen();
+      else if (b.dataset.share === 'screen') startShare();
       else startCamera(b.dataset.share === 'front' ? 'user' : 'environment');
     };
   });
+}
+
+// تطبيق الآيفون: نطلب رمز لمرة وحدة، والتطبيق يفتح قائمة "بدء البث" حق الآيفون
+async function startPhoneScreen() {
+  try {
+    const r = await fetch('/api/screen/start', {
+      method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ channelId: S.myVoice }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || 'server_error');
+    await window.Capacitor.Plugins.ScreenShare.start({ url: d.url, token: d.token });
+    toast('اضغط «بدء البث» عشان تبدأ تشارك شاشتك');
+  } catch (e) {
+    toast(ERRORS[e.message] || 'ما قدرنا نبدأ بث الشاشة', 'err');
+  }
+}
+
+/* ---- صور بث شاشة الجوال: نرسمها على canvas ونحوّلها لفيديو عادي ---- */
+const relayView = new Map(); // sid -> { canvas, ctx, stream, busy }
+const phoneLive = (uid, channel = null) => [...S.relays.values()].some((r) => r.uid === uid && (!channel || r.channel === channel));
+function relayStream(sid) {
+  let r = relayView.get(sid);
+  if (!r) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 16; canvas.height = 9;
+    r = { canvas, ctx: canvas.getContext('2d'), stream: canvas.captureStream(), busy: false };
+    relayView.set(sid, r);
+  }
+  return r.stream;
+}
+function onRelayFrame(buf) {
+  if (buf.byteLength < 16) return;
+  const sid = new TextDecoder().decode(new Uint8Array(buf, 0, 12)).trim();
+  const r = relayView.get(sid);
+  if (!r || r.busy) return; // ما نعرضه الحين، أو للحين نرسم اللي قبله
+  r.busy = true;
+  createImageBitmap(new Blob([new Uint8Array(buf, 12)], { type: 'image/jpeg' }))
+    .then((bmp) => {
+      if (r.canvas.width !== bmp.width || r.canvas.height !== bmp.height) { r.canvas.width = bmp.width; r.canvas.height = bmp.height; }
+      r.ctx.drawImage(bmp, 0, 0);
+      bmp.close?.();
+    })
+    .catch(() => {})
+    .finally(() => { r.busy = false; });
+}
+function stopRelay(sid) {
+  const r = relayView.get(sid);
+  if (!r) return;
+  r.stream.getTracks().forEach((t) => t.stop());
+  relayView.delete(sid);
 }
 
 function cameraStream(facing) {
