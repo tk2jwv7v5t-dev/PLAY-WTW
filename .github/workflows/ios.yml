@@ -26,7 +26,8 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-15
+    # أجهزة ماك Intel: الـ arm64 عليها زحمة وتنلغى البناءات من طول الانتظار
+    runs-on: macos-15-intel
     timeout-minutes: 45
     env:
       BUNDLE_ID: ${{ vars.APP_BUNDLE_ID || 'com.playwtw.app' }}
