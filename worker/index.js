@@ -669,7 +669,7 @@ export class Hub extends DurableObject {
     for (const uid of this.memberIds(ch.server_id)) {
       if (uid === user.id || inRoom.has(uid)) continue;
       this.notify(uid, { kind: 'live', server_id: ch.server_id, channel_id: ch.id, actor_id: user.id, text: ch.name },
-        { title: `${user.display} يبث شاشته الحين`, body: `في ${ch.name}، تعال تفرّج`, tag: `live:${ch.id}`, url: `/?channel=${ch.id}` }, 'all');
+        { title: `${user.display} ${att.screen === 'camera' ? 'يبث كاميرته' : 'يبث شاشته'} الحين`, body: `في ${ch.name}، تعال تفرّج`, tag: `live:${ch.id}`, url: `/?channel=${ch.id}` }, 'all');
     }
   }
 
@@ -1228,9 +1228,11 @@ export class Hub extends DurableObject {
         return;
       case 'voice.update':
         if (!att.voice) return;
-        if (m.sharing && !att.sharing) this.notifyLive(att, user);
+        const wasSharing = att.sharing;
         att.mic = !!m.mic; att.deaf = !!m.deaf; att.sharing = !!m.sharing;
-        att.screen = m.sharing ? clean(m.screen, 80) : null;
+        // نوع البث: شاشة أو كاميرا الجوال
+        att.screen = m.sharing ? (m.screen === 'camera' ? 'camera' : 'screen') : null;
+        if (att.sharing && !wasSharing) this.notifyLive(att, user);
         ws.serializeAttachment(att);
         this.voiceBroadcast(att, [att.voice]);
         return;

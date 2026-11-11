@@ -45,6 +45,7 @@ export const I = {
   maximize: svg('<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>'),
   focus: svg('<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/>'),
   activity: svg('<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>'),
+  flip: svg('<path d="M20 7h-3.2l-1.6-2.4A1.5 1.5 0 0 0 14 4h-4a1.5 1.5 0 0 0-1.2.6L7.2 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2Z"/><path d="M9 13.5a3 3 0 0 1 5.2-2l.8.8"/><path d="M15 10v2.3h-2.3"/><path d="M15 14.5a3 3 0 0 1-5.2 2l-.8-.8"/><path d="M9 18v-2.3h2.3"/>'),
   search: svg('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>'),
   user: svg('<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>'),
   crown: svg('<path d="m2 4 3 12h14l3-12-6 7-4-7-4 7-6-7z"/><path d="M5 20h14"/>'),

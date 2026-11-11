@@ -1380,3 +1380,16 @@ button.hl-row:hover, .hl-row:has(button:hover) { background: var(--bg-3); }
 .staff-row { background: linear-gradient(135deg, rgba(29, 155, 240, .08), transparent 70%); box-shadow: inset 0 0 0 1px rgba(29, 155, 240, .18); margin-bottom: 4px; }
 .staff-tag { font-size: 11px; font-weight: 700; color: #1d9bf0; background: rgba(29, 155, 240, .12); padding: 2px 8px; border-radius: 999px; }
 :root[data-theme="light"] .staff-row { background: linear-gradient(135deg, rgba(29, 155, 240, .1), rgba(255, 255, 255, .7) 70%); }
+
+/* بث الكاميرا من الجوال */
+.screen-tile:not(.is-camera) .cam-only, .screen-tile.is-camera .screen-only { display: none; }
+.screen-tile.mirror video { transform: scaleX(-1); }
+.screen-tile.is-camera video { object-fit: contain; }
+.share-opt { flex-direction: row !important; align-items: center !important; gap: 10px; }
+.share-opt > svg.i { width: 20px; height: 20px; flex: none; }
+.share-opt span { display: flex; flex-direction: column; }
+.pop-note { margin: 6px 8px 2px; font-size: 12px; color: var(--muted); line-height: 1.6; }
+.dock-btn.hidden { display: none; }
+/* أزرار وعناوين البث فوق الفيديو: دايم فاتحة عشان تبان على الخلفية الغامقة */
+:root[data-theme="light"] .screen-tile :is(.tile-btn, .chip:not(.live)) { color: #fff; }
+:root[data-theme="light"] .screen-tile .tile-btn.danger { color: #fff; }

@@ -665,11 +665,16 @@ function renderUserPanel() {
     b.classList.toggle('off', S.deaf);
     b.setAttribute('aria-label', S.deaf ? 'رجّع الصوت' : 'اكتم الصوت');
   }
+  const camOnly = !canScreen() && canCamera();
   for (const b of [$('#dShare'), $('#vpShare')]) {
-    b.innerHTML = S.screen ? I.monitorOff : I.monitor;
+    b.innerHTML = S.screen ? I.monitorOff : camOnly ? I.camera : I.monitor;
     b.classList.toggle('live', !!S.screen);
-    b.title = S.screen ? 'وقف البث' : 'بث الشاشة';
+    b.title = S.screen ? 'وقف البث' : camOnly ? 'بث الكاميرا' : 'بث الشاشة أو الكاميرا';
+    b.setAttribute('aria-label', b.title);
   }
+  $('#dFlip').classList.toggle('hidden', S.shareKind !== 'camera');
+  // جودة البث للشاشة بس، الكاميرا لها إعداد ثابت خفيف
+  $('#dShareCfg').classList.toggle('hidden', S.shareKind === 'camera' || (!canScreen() && !S.screen));
 }
 
 function renderVoicePanel() {
@@ -1025,7 +1030,7 @@ function needGesture() {
 
 function syncVoiceState() {
   if (!S.myVoice) return;
-  send({ t: 'voice.update', mic: S.micOn && S.hasMic && !S.deaf, deaf: S.deaf, sharing: !!S.screen });
+  send({ t: 'voice.update', mic: S.micOn && S.hasMic && !S.deaf, deaf: S.deaf, sharing: !!S.screen, screen: S.shareKind || 'screen' });
 }
 
 async function toggleMic() {
@@ -1084,7 +1089,8 @@ function renderVoiceView(c) {
   for (const sid of [...S.tiles.keys()]) if (!want.has(sid)) removeTile(sid);
   for (const [sid, t] of S.tiles) {
     const v = S.voice.get(sid);
-    $('.tile-who', t.el).textContent = sid === S.sid ? 'شاشتك' : `${userOf(v?.uid).display} يبث`;
+    const cam = (sid === S.sid ? S.shareKind : v?.screen) === 'camera';
+    $('.tile-who', t.el).textContent = sid === S.sid ? (cam ? 'كاميرتك' : 'شاشتك') : `${userOf(v?.uid).display} ${cam ? 'يبث كاميرته' : 'يبث'}`;
     t.el.classList.toggle('focused', S.focus === sid);
   }
   $('#screens').classList.toggle('has-focus', !!S.focus && S.tiles.has(S.focus));
@@ -1116,7 +1122,8 @@ function ensureTile(sid, stream, mine) {
       <div class="screen-top"><span class="chip live">LIVE</span><span class="chip tile-who"></span><span class="chip screen-stats"></span><button class="chip zoom-chip" type="button" data-act="unzoom" title="رجّع الحجم"></button></div>
       <div class="screen-actions">
         ${mine
-          ? `<button class="tile-btn" data-act="cfg" title="جودة البث">${I.sliders}</button>
+          ? `<button class="tile-btn cam-only" data-act="flip" title="اقلب الكاميرا">${I.flip}</button>
+             <button class="tile-btn screen-only" data-act="cfg" title="جودة البث">${I.sliders}</button>
              <button class="tile-btn danger" data-act="stop" title="وقف البث">${I.monitorOff}</button>`
           : `<button class="tile-btn" data-act="mute" title="صوت البث">${I.volume}</button>
              <input class="tile-vol" type="range" min="0" max="1" step="0.05" value="1" aria-label="مستوى صوت البث">
@@ -1138,6 +1145,9 @@ function ensureTile(sid, stream, mine) {
     $('#screens').append(el);
     if (settings.outDevice && video.setSinkId && !mine) video.setSinkId(settings.outDevice).catch(() => {});
   }
+  const kind = mine ? S.shareKind : S.voice.get(sid)?.screen;
+  t.el.classList.toggle('is-camera', kind === 'camera');
+  t.el.classList.toggle('mirror', mine && S.camFacing === 'user');
   if (t.video.srcObject !== stream) {
     t.video.srcObject = stream;
     applyVolumes();
@@ -1165,6 +1175,7 @@ $('#screens').addEventListener('click', (e) => {
   switch (btn.dataset.act) {
     case 'stop': stopShare(); break;
     case 'cfg': openShareModal(); break;
+    case 'flip': flipCamera(); break;
     case 'stats': el.classList.toggle('show-stats'); btn.classList.toggle('active'); break;
     case 'focus': S.focus = S.focus === sid ? null : sid; renderVoiceViewIfOpen(); break;
     case 'full': fullscreen(el); break;
@@ -1429,21 +1440,112 @@ function videoConstraints(cfg) {
 }
 const viewers = () => [...S.voice.values()].filter((v) => v.channel === S.myVoice && v.sid !== S.sid).length;
 
+/* ---- البث: الشاشة، أو كاميرا الجوال ----
+   متصفحات الجوال (خصوصاً الآيفون) ما تسمح للمواقع تلتقط الشاشة،
+   فنبث الشاشة لو المتصفح يدعمها، والكاميرا (أمامية أو خلفية) تشتغل على أي جوال. */
+const canScreen = () => !!navigator.mediaDevices?.getDisplayMedia;
+const canCamera = () => !!navigator.mediaDevices?.getUserMedia;
+const touchDevice = () => matchMedia('(pointer: coarse)').matches;
+// إعدادات خفيفة للكاميرا: الجوال يرفع على بيانات الجوال غالباً
+const CAM_CFG = { res: '720', fps: 30, mode: 'motion', brAuto: false, br: 2.5, audio: false };
+
+function shareClicked(anchor) {
+  if (S.screen) { stopShare(); return; }
+  if (!S.myVoice) { toast('ادخل روم صوتي أول عشان تبث'); return; }
+  // الكمبيوتر: بث الشاشة مباشرة مثل قبل
+  if (canScreen() && !touchDevice()) { startShare(); return; }
+  const opts = [];
+  if (canScreen()) opts.push(['screen', I.monitor, 'شاشة الجوال', 'كل اللي قدامك على الشاشة']);
+  if (canCamera()) {
+    opts.push(['back', I.camera, 'الكاميرا الخلفية', 'اللي قدامك، مثل التصوير']);
+    opts.push(['front', I.camera, 'الكاميرا الأمامية', 'وجهك']);
+  }
+  if (!opts.length) { toast('متصفحك ما يدعم البث. جرّب كروم أو سفاري بآخر تحديث.', 'err'); return; }
+  const note = canScreen() ? '' : '<p class="pop-note">متصفحات الآيفون وأغلب الجوالات ما تسمح للمواقع تبث الشاشة، فتقدر تبث الكاميرا بدالها.</p>';
+  openPop(anchor, `<div class="pop-title">وش تبي تبث؟</div>${opts.map(([k, icon, label, sub]) =>
+    `<button type="button" class="pop-opt row share-opt" data-share="${k}">${icon}<span><b>${label}</b><small>${sub}</small></span></button>`).join('')}${note}`, (pop) => {
+    pop.onclick = (e) => {
+      const b = e.target.closest('[data-share]');
+      if (!b) return;
+      closePop();
+      if (b.dataset.share === 'screen') startShare();
+      else startCamera(b.dataset.share === 'front' ? 'user' : 'environment');
+    };
+  });
+}
+
+function cameraStream(facing) {
+  return navigator.mediaDevices.getUserMedia({
+    video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } },
+    audio: false, // الصوت يروح من المايك أصلاً
+  });
+}
+
+async function startCamera(facing) {
+  if (!S.myVoice) { toast('ادخل روم صوتي أول عشان تبث'); return; }
+  let st;
+  try { st = await cameraStream(facing); } catch (e) {
+    toast(e.name === 'NotAllowedError' ? 'لازم تسمح للموقع يستخدم الكاميرا من إعدادات المتصفح' : e.name === 'NotFoundError' ? 'ما لقينا كاميرا في جهازك' : 'ما قدرنا نفتح الكاميرا: ' + e.message, 'err');
+    return;
+  }
+  beginShare(st, 'camera', facing);
+}
+
+async function flipCamera() {
+  if (S.shareKind !== 'camera' || !S.screen) return;
+  const next = S.camFacing === 'user' ? 'environment' : 'user';
+  // بعض الجوالات ما تفتح كاميرتين مع بعض، فنقفل الحالية أول
+  const old = S.screen;
+  old.getTracks().forEach((t) => t.stop());
+  let st;
+  try { st = await cameraStream(next); } catch {
+    try { st = await cameraStream(S.camFacing); } catch { stopShare(); toast('ما قدرنا نقلب الكاميرا', 'err'); return; }
+    toast('جهازك فيه كاميرا وحدة بس', 'err');
+    beginShare(st, 'camera', S.camFacing, true);
+    return;
+  }
+  beginShare(st, 'camera', next, true);
+}
+
+function beginShare(st, kind, facing, swap = false) {
+  if (!S.myVoice || !S.vs) { st.getTracks().forEach((t) => t.stop()); return; }
+  if (S.screen && S.screen !== st) S.screen.getTracks().forEach((t) => t.stop());
+  S.screen = st;
+  S.shareKind = kind;
+  S.camFacing = kind === 'camera' ? facing : null;
+  const cfg = kind === 'camera' ? CAM_CFG : shareCfg;
+  const vt = st.getVideoTracks()[0];
+  vt.contentHint = cfg.mode === 'motion' ? 'motion' : 'detail';
+  vt.addEventListener('ended', () => { if (S.screen === st) stopShare(); });
+  S.vs.startScreen(st, { ...cfg, bitrate: bitrateFor(cfg) });
+  if (swap) { renderAll(); return; }
+  syncVoiceState();
+  S.voice.set(S.sid, { ...S.voice.get(S.sid), sharing: true, screen: kind });
+  if (S.cur.channel !== S.myVoice) { const f = findChannel(S.myVoice); S.cur.server = f.server.id; selectChannel(S.myVoice); }
+  renderAll();
+  toast(kind === 'camera' ? `بدأ بث ${facing === 'user' ? 'الكاميرا الأمامية' : 'الكاميرا الخلفية'}` : 'بدأ البث', 'ok');
+}
+
 async function startShare() {
   if (!S.myVoice) { toast('ادخل روم صوتي أول عشان تبث'); return; }
-  if (!navigator.mediaDevices?.getDisplayMedia) {
+  if (!canScreen()) {
+    if (canCamera()) { shareClicked($('#dShare')); return; }
     toast('جهازك أو متصفحك ما يدعم بث الشاشة — جرّب كروم أو إيدج على الكمبيوتر', 'err');
     return;
   }
   let st;
+  const mobile = touchDevice();
   try {
-    st = await navigator.mediaDevices.getDisplayMedia({
-      video: videoConstraints(shareCfg),
-      audio: shareCfg.audio ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false } : false,
-      selfBrowserSurface: 'exclude',
-      surfaceSwitching: 'include',
-      systemAudio: shareCfg.audio ? 'include' : 'exclude',
-    });
+    st = await navigator.mediaDevices.getDisplayMedia(mobile
+      // الجوال: طلب بسيط، لأن بعض متصفحات الجوال ترفض الخيارات الزيادة
+      ? { video: { frameRate: { ideal: 30, max: 30 } }, audio: shareCfg.audio }
+      : {
+        video: videoConstraints(shareCfg),
+        audio: shareCfg.audio ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false } : false,
+        selfBrowserSurface: 'exclude',
+        surfaceSwitching: 'include',
+        systemAudio: shareCfg.audio ? 'include' : 'exclude',
+      });
   } catch (e) {
     if (e.name !== 'NotAllowedError' && e.name !== 'AbortError') toast('ما قدرنا نبدأ البث: ' + e.message, 'err');
     return;
@@ -1451,6 +1553,8 @@ async function startShare() {
   if (!S.myVoice || !S.vs) { st.getTracks().forEach((t) => t.stop()); return; }
   if (S.screen) S.screen.getTracks().forEach((t) => t.stop());
   S.screen = st;
+  S.shareKind = 'screen';
+  S.camFacing = null;
   const vt = st.getVideoTracks()[0];
   vt.contentHint = shareCfg.mode === 'motion' ? 'motion' : 'detail';
   vt.addEventListener('ended', () => { if (S.screen === st) stopShare(); });
@@ -1468,6 +1572,8 @@ function stopShare(silent) {
   if (!S.screen) return;
   S.screen.getTracks().forEach((t) => t.stop());
   S.screen = null;
+  S.shareKind = null;
+  S.camFacing = null;
   S.vs?.stopScreen();
   removeTile(S.sid);
   if (!silent) {
@@ -1480,7 +1586,7 @@ function stopShare(silent) {
 
 async function applyLiveShare() {
   const vt = S.screen?.getVideoTracks()[0];
-  if (!vt) return;
+  if (!vt || S.shareKind === 'camera') return;
   vt.contentHint = shareCfg.mode === 'motion' ? 'motion' : 'detail';
   try { await vt.applyConstraints(videoConstraints(shareCfg)); } catch (e) { console.warn(e); }
   S.vs?.setConfig({ ...shareCfg, bitrate: bitrateFor() });
@@ -2074,7 +2180,8 @@ $('#vpChannel').addEventListener('click', () => {
 });
 for (const id of ['#micBtn', '#dMic']) $(id).addEventListener('click', toggleMic);
 for (const id of ['#deafBtn', '#dDeaf']) $(id).addEventListener('click', () => setDeaf(!S.deaf));
-for (const id of ['#dShare', '#vpShare']) $(id).addEventListener('click', () => (S.screen ? stopShare() : startShare()));
+for (const id of ['#dShare', '#vpShare']) $(id).addEventListener('click', (e) => shareClicked(e.currentTarget));
+$('#dFlip').addEventListener('click', flipCamera);
 $('#dShareCfg').addEventListener('click', openShareModal);
 for (const id of ['#dLeave', '#vpLeave']) $(id).addEventListener('click', () => leaveVoice());
 $('#settingsBtn').addEventListener('click', openSettings);
