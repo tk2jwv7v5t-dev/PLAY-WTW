@@ -142,24 +142,6 @@ npx wrangler dev
 
 
 
-## تطبيق الآيفون (TestFlight)
-
-التطبيق يفتح الموقع من داخله، فأي تحديث للموقع يوصل للتطبيق على طول. البناء الجديد يحتاجه بس لو تغيّر شي في مجلد `app/`، ويصير لحاله على ماك سحابي من GitHub Actions.
-
-**مرة وحدة بس:**
-1. اشترك في [Apple Developer Program](https://developer.apple.com/programs/) (99$ بالسنة).
-2. في [App Store Connect](https://appstoreconnect.apple.com) ← Apps ← ➕ New App: المنصة iOS، والاسم PLAY WTW، والـ Bundle ID ‏`com.playwtw.app` (لو ما طلع في القائمة، سجّله أول من developer.apple.com ← Identifiers).
-3. App Store Connect ← Users and Access ← Integrations ← App Store Connect API ← ➕: سوّ مفتاح بصلاحية **Admin**، ونزّل ملف `.p8` (ينزل مرة وحدة بس).
-4. في قيت هب: Settings ← Secrets and variables ← Actions ← New repository secret، وحط أربع أسرار:
-   - `APPLE_TEAM_ID`: من developer.apple.com ← Membership
-   - `ASC_KEY_ID` و`ASC_ISSUER_ID`: من صفحة المفتاح
-   - `ASC_KEY_P8`: افتح ملف `.p8` بأي محرر نصوص وانسخ كل اللي فيه
-5. Actions ← iOS → TestFlight ← Run workflow.
-
-بعد 10–30 دقيقة تطلع النسخة في TestFlight. نزّل تطبيق TestFlight من App Store وثبّت منه.
-
-بدون الأسرار، البناء يطلع نسخة بدون توقيع (للتأكد إن كل شي سليم) وما يرفع شي.
-
 ## الأمان
 - كلمات المرور مشفّرة (PBKDF2 مع salt لكل حساب)، والجلسة في كوكي `HttpOnly` و`Secure` و`SameSite`.
 - ما فيه أي مفتاح سري في كود الواجهة. مفاتيح TURN محفوظة كـ Secrets في Cloudflare، والمتصفح ياخذ بيانات دخول مؤقتة بس.
