@@ -9,7 +9,13 @@ export const isStandalone = () => matchMedia('(display-mode: standalone)').match
 export const inApp = () => !!window.Capacitor?.isNativePlatform?.();
 
 // إشعارات الجوال داخل التطبيق (بدون حساب مطوّرين): تشتغل والتطبيق مفتوح أو بالخلفية
-const LN = () => window.Capacitor?.Plugins?.LocalNotifications || null;
+import { nativeHas, nativeCall, nativeListen } from './native.js';
+const LN = () => (inApp() && nativeHas('LocalNotifications') ? {
+  checkPermissions: () => nativeCall('LocalNotifications', 'checkPermissions'),
+  requestPermissions: () => nativeCall('LocalNotifications', 'requestPermissions'),
+  schedule: (o) => nativeCall('LocalNotifications', 'schedule', o),
+  addListener: (e, cb) => nativeListen('LocalNotifications', e, cb),
+} : null);
 export const appNotifySupported = () => inApp() && !!LN();
 export async function appNotifyAllowed(ask = false) {
   const ln = LN();

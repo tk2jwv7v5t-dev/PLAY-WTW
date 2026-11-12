@@ -2,6 +2,7 @@
    PLAY WTW — الواجهة
    ===================================================== */
 import { startI18n, tr, LANG, setLang } from './i18n.js';
+import { nativeCall } from './native.js';
 import { I, $, $$, esc, clean, fillIcons, autoLabel, busy, avatar, linkify, timeLabel, timeAgo, store, toast, beep, ERRORS } from './util.js';
 import { startIntro } from './intro.js';
 import { MicPipeline, LevelWatcher } from './audio.js';
@@ -1500,7 +1501,8 @@ function shareClicked(anchor) {
   // الكمبيوتر: بث الشاشة مباشرة مثل قبل
   if (canScreen() && !touchDevice()) { startShare(); return; }
   const opts = [];
-  const nativeScreen = !!window.Capacitor?.Plugins?.ScreenShare;
+  // داخل تطبيق الآيفون: بث الشاشة الحقيقي عن طريق جزء البث في التطبيق
+  const nativeScreen = inApp();
   if (nativeScreen) opts.push(['phone', I.monitor, 'شاشة الجوال', 'كل اللي قدامك، حتى لو طلعت من التطبيق']);
   else if (canScreen()) opts.push(['screen', I.monitor, 'شاشة الجوال', 'كل اللي قدامك على الشاشة']);
   if (canCamera()) {
@@ -1531,10 +1533,11 @@ async function startPhoneScreen() {
     });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(d.error || 'server_error');
-    await window.Capacitor.Plugins.ScreenShare.start({ url: d.url, token: d.token });
+    await nativeCall('ScreenShare', 'start', { url: d.url, token: d.token });
     toast('اضغط «بدء البث» عشان تبدأ تشارك شاشتك');
   } catch (e) {
-    toast(ERRORS[e.message] || 'ما قدرنا نبدأ بث الشاشة', 'err');
+    // نعرض سبب الخطأ عشان يقدر يصوّره ويرسله للدعم
+    toast(ERRORS[e.message] || `ما قدرنا نبدأ بث الشاشة (${e?.message || e})`, 'err');
   }
 }
 

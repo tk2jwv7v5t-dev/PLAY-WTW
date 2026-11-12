@@ -245,7 +245,7 @@ const PATTERNS = [
    ['اكتب رسالة لـ {}', 'Message {}'], ['اكتب رسالة في #{}', 'Message #{}'], ['متصلين — {#}', 'Online — {}'], ['غير متصلين — {#}', 'Offline — {}'],
   ['هذي بداية محادثتك الخاصة مع {}', 'This is the start of your private chat with {}'], ['. محد يشوفها غيركم.', '. Only the two of you can see it.'],
   ['هلا في #{}', 'Welcome to #{}'], ['الصورة ما انرسلت: {}', "Photo wasn't sent: {}"], ['فيه {#} {} يسولفون الحين', '{} {} talking now'],
-  ['{} يبث كاميرته', '{} is sharing camera'], ['{} يبث شاشة جواله', '{} is sharing their phone screen'], ['{} يبث', '{} is sharing'], ['بدأ بث {}', 'Started sharing: {}'],
+  ['{} يبث كاميرته', '{} is sharing camera'], ['{} يبث شاشة جواله', '{} is sharing their phone screen'], ['ما قدرنا نبدأ بث الشاشة ({})', "Couldn't start screen sharing ({})"], ['{} يبث', '{} is sharing'], ['بدأ بث {}', 'Started sharing: {}'],
   ['بدأ البث: {} · {#} فريم · {} Mbps', 'Sharing: {} · {} fps · {} Mbps'], ['تحدثت الجودة: {} · {#} فريم · {} Mbps', 'Quality updated: {} · {} fps · {} Mbps'],
   ['ما قدرنا نفتح الكاميرا: {}', "Couldn't open the camera: {}"], ['ما قدرنا نبدأ البث: {}', "Couldn't start sharing: {}"],
   ['سوّينا القروب بس الصورة ما انرفعت: {}', "Group created, but the picture didn't upload: {}"], ['سوّينا {} 🎉 ادعُ أصحابك من قائمة القروب', 'Created {} 🎉 Invite friends from the group menu'],
