@@ -1,4 +1,5 @@
 import ReplayKit
+import Network
 import CoreImage
 import UIKit
 
@@ -23,19 +24,54 @@ class SampleHandler: RPBroadcastSampleHandler {
         let ext = Bundle.main.bundleIdentifier ?? ""
         let appId = ext.hasSuffix(".ScreenShare") ? String(ext.dropLast(".ScreenShare".count)) : ext
         let shared = UserDefaults(suiteName: "group." + appId)
-        guard let url = shared?.string(forKey: "url"),
-              let token = shared?.string(forKey: "token"),
-              let at = shared?.double(forKey: "at"),
-              Date().timeIntervalSince1970 - at < 120,
-              var comps = URLComponents(string: url) else {
-            stop("افتح PLAY WTW، ادخل روم صوتي، واضغط زر البث واختر «شاشة الجوال».")
+        // أول شي: المكان المشترك. لو ما فيه رمز (مثل TrollStore) نطلبه من التطبيق عن طريق اتصال محلي
+        if let url = shared?.string(forKey: "url"), let token = shared?.string(forKey: "token"),
+           let at = shared?.double(forKey: "at"), Date().timeIntervalSince1970 - at < 120 {
+            shared?.removeObject(forKey: "token")
+            shared?.set(Date().timeIntervalSince1970, forKey: "live")
+            connect(url: url, token: token)
             return
         }
-        shared?.removeObject(forKey: "token")
-        shared?.set(Date().timeIntervalSince1970, forKey: "live")
+        fetchFromApp { [weak self] url, token in
+            guard let self = self else { return }
+            guard let url = url, let token = token else {
+                self.stop("افتح PLAY WTW، ادخل روم صوتي، واضغط زر الشاشة 🖥️ وبعدين «بدء البث».")
+                return
+            }
+            shared?.set(Date().timeIntervalSince1970, forKey: "live")
+            self.connect(url: url, token: token)
+        }
+    }
+
+    /// نطلب الرمز من التطبيق (يكون مفتوح ورا قائمة البث) عن طريق 127.0.0.1
+    private func fetchFromApp(_ done: @escaping (String?, String?) -> Void) {
+        let conn = NWConnection(host: "127.0.0.1", port: 48653, using: .tcp)
+        var finished = false
+        let finish: (String?, String?) -> Void = { url, token in
+            if finished { return }
+            finished = true
+            conn.cancel()
+            done(url, token)
+        }
+        conn.stateUpdateHandler = { state in
+            if case .failed = state { finish(nil, nil) }
+        }
+        conn.start(queue: queue)
+        conn.receive(minimumIncompleteLength: 1, maximumLength: 16384) { data, _, _, _ in
+            guard let data = data,
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                finish(nil, nil)
+                return
+            }
+            finish(obj["url"] as? String, obj["token"] as? String)
+        }
+        queue.asyncAfter(deadline: .now() + 4) { finish(nil, nil) }
+    }
+
+    private func connect(url: String, token: String) {
+        guard var comps = URLComponents(string: url) else { stop("صار خطأ في رابط البث."); return }
         comps.queryItems = [URLQueryItem(name: "token", value: token)]
         guard let wsURL = comps.url else { stop("صار خطأ في رابط البث."); return }
-
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 15
         session = URLSession(configuration: config)

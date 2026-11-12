@@ -28,15 +28,15 @@ public class ScreenSharePlugin: CAPPlugin, CAPBridgedPlugin {
             call.reject("missing url or token")
             return
         }
-        guard let shared = UserDefaults(suiteName: Self.groupId) else {
-            call.reject("app group unavailable")
-            return
+        // الطريقتين: المكان المشترك (لو يشتغل)، واتصال محلي داخل الجوال (يشتغل دايم)
+        if let shared = UserDefaults(suiteName: Self.groupId) {
+            shared.set(url, forKey: "url")
+            shared.set(token, forKey: "token")
+            shared.set(Date().timeIntervalSince1970, forKey: "at")
+            shared.removeObject(forKey: "live")
+            shared.synchronize()
         }
-        shared.set(url, forKey: "url")
-        shared.set(token, forKey: "token")
-        shared.set(Date().timeIntervalSince1970, forKey: "at")
-        shared.removeObject(forKey: "live")
-        shared.synchronize()
+        LocalTokenServer.shared.serve(url: url, token: token)
 
         DispatchQueue.main.async {
             guard let host = self.bridge?.viewController else {
@@ -120,6 +120,10 @@ final class BroadcastSheet: UIViewController {
         for case let button as UIButton in picker.subviews {
             button.sendActions(for: .touchUpInside)
         }
+        // جزء البث استلم الرمز = البث بدأ، نسكّر النافذة
+        NotificationCenter.default.addObserver(forName: LocalTokenServer.served, object: nil, queue: .main) { [weak self] _ in
+            self?.dismiss(animated: true)
+        }
         // أول ما يبدأ البث نسكّر النافذة
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             guard let self = self else { return }
@@ -133,5 +137,6 @@ final class BroadcastSheet: UIViewController {
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         timer?.invalidate()
+        NotificationCenter.default.removeObserver(self)
     }
 }
