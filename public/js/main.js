@@ -699,14 +699,24 @@ function renderUserPanel() {
     b.classList.toggle('off', S.deaf);
     b.setAttribute('aria-label', S.deaf ? 'رجّع الصوت' : 'اكتم الصوت');
   }
-  const camOnly = !canScreen() && canCamera();
+  // زرين مثل ديسكورد: الشاشة، والكاميرا (في الجوال)
+  const screenLive = (!!S.screen && S.shareKind !== 'camera') || phoneLive(S.me?.id);
+  const camLive = S.shareKind === 'camera';
+  const noScreen = touchDevice() && !inApp() && !canScreen(); // متصفح جوال ما يسمح ببث الشاشة
   for (const b of [$('#dShare'), $('#vpShare')]) {
-    b.innerHTML = S.screen ? I.monitorOff : camOnly ? I.camera : I.monitor;
-    b.classList.toggle('live', !!S.screen || phoneLive(S.me?.id));
-    b.title = S.screen ? 'وقف البث' : camOnly ? 'بث الكاميرا' : 'بث الشاشة أو الكاميرا';
+    b.innerHTML = screenLive ? I.monitorOff : I.monitor;
+    b.classList.toggle('live', screenLive);
+    b.title = screenLive ? 'وقف البث' : 'شارك شاشتك';
     b.setAttribute('aria-label', b.title);
   }
-  $('#dFlip').classList.toggle('hidden', S.shareKind !== 'camera');
+  $('#dShare').classList.toggle('hidden', noScreen);
+  $('#vpShare').classList.toggle('hidden', noScreen);
+  const cam = $('#dCam');
+  cam.classList.toggle('hidden', !(touchDevice() && canCamera()));
+  cam.classList.toggle('live', camLive);
+  cam.title = camLive ? 'وقف الكاميرا' : 'الكاميرا';
+  cam.setAttribute('aria-label', cam.title);
+  $('#dFlip').classList.toggle('hidden', !camLive);
   // جودة البث للشاشة بس، الكاميرا لها إعداد ثابت خفيف
   $('#dShareCfg').classList.toggle('hidden', S.shareKind === 'camera' || (!canScreen() && !S.screen));
 }
@@ -1493,6 +1503,30 @@ const canCamera = () => !!navigator.mediaDevices?.getUserMedia;
 const touchDevice = () => matchMedia('(pointer: coarse)').matches;
 // إعدادات خفيفة للكاميرا: الجوال يرفع على بيانات الجوال غالباً
 const CAM_CFG = { res: '720', fps: 30, mode: 'motion', brAuto: false, br: 2.5, audio: false };
+
+// زر الشاشة: تطبيق الآيفون يبث شاشة الجوال على طول، والكمبيوتر يبث شاشته
+function screenClicked(anchor) {
+  if (phoneLive(S.me.id)) { send({ t: 'relay.stop' }); toast('وقّفنا بث شاشة الجوال'); return; }
+  if (S.screen && S.shareKind !== 'camera') { stopShare(); return; }
+  if (!S.myVoice) { toast('ادخل روم صوتي أول عشان تبث'); return; }
+  if (inApp()) { startPhoneScreen(); return; }
+  if (canScreen()) { startShare(); return; }
+  shareClicked(anchor);
+}
+// زر الكاميرا (الجوال): الأمامية أو الخلفية
+function cameraClicked(anchor) {
+  if (S.shareKind === 'camera') { stopShare(); return; }
+  if (!S.myVoice) { toast('ادخل روم صوتي أول عشان تبث'); return; }
+  openPop(anchor, `<div class="pop-title">أي كاميرا؟</div>${[['back', 'الكاميرا الخلفية', 'اللي قدامك، مثل التصوير'], ['front', 'الكاميرا الأمامية', 'وجهك']].map(([k, label, sub]) =>
+    `<button type="button" class="pop-opt row share-opt" data-cam="${k}">${I.camera}<span><b>${label}</b><small>${sub}</small></span></button>`).join('')}`, (pop) => {
+    pop.onclick = (e) => {
+      const b = e.target.closest('[data-cam]');
+      if (!b) return;
+      closePop();
+      startCamera(b.dataset.cam === 'front' ? 'user' : 'environment');
+    };
+  });
+}
 
 function shareClicked(anchor) {
   if (S.screen) { stopShare(); return; }
@@ -2296,7 +2330,8 @@ $('#vpChannel').addEventListener('click', () => {
 });
 for (const id of ['#micBtn', '#dMic']) $(id).addEventListener('click', toggleMic);
 for (const id of ['#deafBtn', '#dDeaf']) $(id).addEventListener('click', () => setDeaf(!S.deaf));
-for (const id of ['#dShare', '#vpShare']) $(id).addEventListener('click', (e) => shareClicked(e.currentTarget));
+for (const id of ['#dShare', '#vpShare']) $(id).addEventListener('click', (e) => screenClicked(e.currentTarget));
+$('#dCam').addEventListener('click', (e) => cameraClicked(e.currentTarget));
 $('#dFlip').addEventListener('click', flipCamera);
 $('#callInvite').addEventListener('click', () => { const f = S.myVoice && findChannel(S.myVoice); if (f?.server) openInvite(f.server); });
 $('#dChat').addEventListener('click', () => {
