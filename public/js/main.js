@@ -1560,6 +1560,7 @@ function shareClicked(anchor) {
 
 // تطبيق الآيفون: نطلب رمز لمرة وحدة، والتطبيق يفتح قائمة "بدء البث" حق الآيفون
 async function startPhoneScreen() {
+  toast('جاري تجهيز بث الشاشة…');
   try {
     const r = await fetch('/api/screen/start', {
       method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
@@ -1567,8 +1568,11 @@ async function startPhoneScreen() {
     });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(d.error || 'server_error');
-    await nativeCall('ScreenShare', 'start', { url: d.url, token: d.token });
-    toast('اضغط «بدء البث» عشان تبدأ تشارك شاشتك');
+    // لو التطبيق قديم (ما فيه جزء البث) ما يرد أبد، فنعطيه مهلة
+    await Promise.race([
+      nativeCall('ScreenShare', 'start', { url: d.url, token: d.token }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('التطبيق ما رد — ثبّت آخر نسخة من التطبيق')), 6000)),
+    ]);
   } catch (e) {
     // نعرض سبب الخطأ عشان يقدر يصوّره ويرسله للدعم
     toast(ERRORS[e.message] || `ما قدرنا نبدأ بث الشاشة (${e?.message || e})`, 'err');

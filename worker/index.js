@@ -998,7 +998,8 @@ export class Hub extends DurableObject {
   async webSocketMessage(ws, raw) {
     if (typeof raw !== 'string') {
       const a = ws.deserializeAttachment();
-      if (a?.relay && !a.gone && raw instanceof ArrayBuffer) this.relayFrame(ws, a, raw);
+      if (a?.relay && a.gone) { try { ws.close(4000, 'stopped'); } catch { /* تسكر */ } return; }
+      if (a?.relay && raw instanceof ArrayBuffer) this.relayFrame(ws, a, raw);
       return;
     }
     if (raw.length > 65536) return;

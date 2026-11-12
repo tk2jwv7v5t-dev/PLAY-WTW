@@ -32,6 +32,7 @@ class SampleHandler: RPBroadcastSampleHandler {
             return
         }
         shared?.removeObject(forKey: "token")
+        shared?.set(Date().timeIntervalSince1970, forKey: "live")
         comps.queryItems = [URLQueryItem(name: "token", value: token)]
         guard let wsURL = comps.url else { stop("صار خطأ في رابط البث."); return }
 
@@ -67,6 +68,9 @@ class SampleHandler: RPBroadcastSampleHandler {
     }
 
     override func broadcastFinished() {
+        let ext = Bundle.main.bundleIdentifier ?? ""
+        let appId = ext.hasSuffix(".ScreenShare") ? String(ext.dropLast(".ScreenShare".count)) : ext
+        UserDefaults(suiteName: "group." + appId)?.removeObject(forKey: "live")
         lock.lock(); finished = true; lock.unlock()
         socket?.cancel(with: .normalClosure, reason: nil)
         session?.invalidateAndCancel()

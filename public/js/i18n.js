@@ -231,7 +231,7 @@ const EN = {
   'ما لقينا أحد بهالاسم. تأكد من اسم المستخدم (مو الاسم اللي يظهر)': 'No one with that username. Check the username (not the display name)',
   'ما تقدر ترسل لنفسك 😄': "You can't message yourself 😄", 'الصورة ما انرفعت صح، جرّب مرة ثانية': "The photo didn't upload, try again",
   'انطردت من هالقروب، فما تقدر ترجع له': "You were banned from this group and can't rejoin", 'حسابك موقوف بسبب مخالفة. إذا تشوف إنه غلط، تواصل مع الدعم': 'Your account is suspended for a violation. If you think this is a mistake, contact support',
-  'كل اللي قدامك، حتى لو طلعت من التطبيق': 'Everything on your screen, even outside the app', 'وقّفنا بث شاشة الجوال': 'Stopped sharing your phone screen', 'شارك شاشتك': 'Share your screen', 'الكاميرا': 'Camera', 'وقف الكاميرا': 'Stop camera', 'أي كاميرا؟': 'Which camera?',
+  'كل اللي قدامك، حتى لو طلعت من التطبيق': 'Everything on your screen, even outside the app', 'وقّفنا بث شاشة الجوال': 'Stopped sharing your phone screen', 'جاري تجهيز بث الشاشة…': 'Preparing screen share…', 'التطبيق ما رد — ثبّت آخر نسخة من التطبيق': "The app didn't respond — install the latest version", 'شارك شاشتك': 'Share your screen', 'الكاميرا': 'Camera', 'وقف الكاميرا': 'Stop camera', 'أي كاميرا؟': 'Which camera?',
   'اضغط «بدء البث» عشان تبدأ تشارك شاشتك': 'Tap "Start Broadcast" to share your screen', 'ما قدرنا نبدأ بث الشاشة': "Couldn't start screen sharing",
   'المايك انفصل — نحاول نرجعه': 'Mic disconnected — reconnecting', 'انقطع الاتصال… نحاول نرجع': 'Connection lost… reconnecting',
 };
