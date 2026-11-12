@@ -54,6 +54,8 @@ jobs:
         run: |
           npm ci
           npx cap sync ios
+          # plugin بث الشاشة جزء من التطبيق نفسه (مو من npm)، فنضيفه لقائمة اللي يتسجّلون أول ما يفتح التطبيق
+          node -e "const f='ios/App/App/capacitor.config.json';const c=JSON.parse(require('fs').readFileSync(f,'utf8'));c.packageClassList=[...new Set([...(c.packageClassList||[]),'ScreenSharePlugin'])];require('fs').writeFileSync(f,JSON.stringify(c,null,2));console.log(c.packageClassList)"
           xcodebuild -version
 
       - name: مفتاح App Store Connect

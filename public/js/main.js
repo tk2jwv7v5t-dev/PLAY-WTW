@@ -682,6 +682,7 @@ function renderUserPanel() {
   $('#meDisplay').textContent = S.me.display;
   $('#meUser').textContent = '@' + S.me.username;
   $('#tabYouAvatar').innerHTML = avatar(S.me, 'xs');
+  for (const el of $$('.app-only')) el.classList.toggle('hidden', !inApp());
   $('#youCard').innerHTML = `<div class="you-hero">${avatar(S.me, 'lg')}<i class="st on"></i></div>
     <h2>${esc(S.me.display)}${vb(S.me)}</h2><p class="muted" dir="ltr">@${esc(S.me.username)}</p>
     <div class="you-actions">
@@ -1558,6 +1559,28 @@ function shareClicked(anchor) {
   });
 }
 
+// تشخيص تطبيق الآيفون: وش الأجزاء اللي التطبيق يعرضها للموقع (عشان نعرف سبب أي مشكلة)
+async function appDiagnostics() {
+  const c = window.Capacitor || {};
+  const lines = [];
+  lines.push(`Capacitor: ${c.isNativePlatform?.() ? 'native' : 'web'} / ${c.getPlatform?.() || '?'}`);
+  const headers = (c.PluginHeaders || []).map((h) => h.name);
+  lines.push(`PluginHeaders: ${headers.join(', ') || '-'}`);
+  lines.push(`Plugins: ${Object.keys(c.Plugins || {}).join(', ') || '-'}`);
+  lines.push(`isPluginAvailable(ScreenShare): ${c.isPluginAvailable?.('ScreenShare')}`);
+  lines.push(`nativePromise: ${typeof c.nativePromise}`);
+  const ping = await Promise.race([
+    nativeCall('ScreenShare', 'ping').then((r) => 'ok ' + JSON.stringify(r)).catch((e) => 'error: ' + (e?.message || e)),
+    new Promise((r) => setTimeout(() => r('no reply (3s)'), 3000)),
+  ]);
+  lines.push(`ScreenShare.ping: ${ping}`);
+  $('#confirmText').style.whiteSpace = 'pre-line';
+  $('#confirmText').dir = 'ltr';
+  await confirmBox('تشخيص التطبيق', lines.join('\n'), 'تمام');
+  $('#confirmText').style.whiteSpace = '';
+  $('#confirmText').dir = '';
+}
+
 // تطبيق الآيفون: نطلب رمز لمرة وحدة، والتطبيق يفتح قائمة "بدء البث" حق الآيفون
 async function startPhoneScreen() {
   toast('جاري تجهيز بث الشاشة…');
@@ -2385,6 +2408,7 @@ $('#youScreen').addEventListener('click', (e) => {
   if (act === 'mic') { toggleMic(); renderUserPanel(); }
   else if (act === 'deaf') { setDeaf(!S.deaf); renderUserPanel(); }
   else if (act === 'help') openHelp();
+  else if (act === 'diag') appDiagnostics();
   else if (act === 'logout') $('#logoutBtn').click();
   else openSettings().then(() => $(`#settingsModal .seg-tabs [data-pane=${act}]`).click());
 });
