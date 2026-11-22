@@ -912,10 +912,12 @@ export class Hub extends DurableObject {
     // لين 15 صورة بالثانية، وكل صورة أقل من 700 كيلو
     if (data.byteLength > 700 * 1024 || now - att.last < 60) return;
     att.last = now;
-    // كل ثانيتين نتأكد إن صاحبه للحين في الروم
-    if (now - att.check > 2000) {
+    // الآيفون يقفل اتصال التطبيق لما يطلع منه، فما نربط البث فيه.
+    // بس كل 10 ثواني نتأكد إن الروم للحين موجود وإنه للحين عضو في القروب (ما انطرد)
+    if (now - att.check > 10000) {
       att.check = now;
-      if (!this.inVoice(att.uid, att.voice)) { this.dropSocket(ws); try { ws.close(4000, 'left'); } catch { /* */ } return; }
+      const ch = this.channel(att.voice);
+      if (!ch || !this.isMember(ch.server_id, att.uid)) { this.dropSocket(ws); try { ws.close(4000, 'left'); } catch { /* */ } return; }
     }
     ws.serializeAttachment(att);
     const head = new TextEncoder().encode(att.sid.padEnd(12, ' ').slice(0, 12));
