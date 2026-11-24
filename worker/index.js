@@ -77,6 +77,18 @@ function randomCode(len) {
 async function sha256(s) {
   return b64url(new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(s))));
 }
+// كلمة مرور مؤقتة: 10 حروف وأرقام سهلة القراءة (بدون 0 و o و 1 و l)
+function tempPassword() {
+  const abc = 'abcdefghjkmnpqrstuvwxyz23456789';
+  const out = [];
+  while (out.length < 10) {
+    for (const b of randomBytes(16)) {
+      if (b < 248 && out.length < 10) out.push(abc[b % abc.length]); // 248 = 31 × 8، بدون انحياز
+    }
+  }
+  return out.join('');
+}
+
 async function hashPassword(password, salt) {
   const key = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
   const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: PBKDF2_ITERATIONS }, key, 256);
@@ -989,7 +1001,7 @@ export class Hub extends DurableObject {
     const prefs = Object.fromEntries(this.sql.exec('SELECT server_id, level FROM notify_prefs WHERE user_id = ?', user.id).toArray().map((r) => [r.server_id, r.level]));
     const dms = this.sql.exec('SELECT * FROM dms WHERE (a = ? OR b = ?) AND last IS NOT NULL ORDER BY last DESC LIMIT 100', user.id, user.id)
       .toArray().map((d) => this.dmPayload(d, user.id));
-    const reports = Object.fromEntries(servers.filter((s) => s.owner === user.id).map((s) => [s.id, this.openReports(s.id)]));
+    const reports = {}; // البلاغات صارت للدعم الفني بس
     return {
       t: 'ready', me: { ...this.publicUser(user), admin: this.isAdmin(user) }, sid, servers, online, voice: this.voiceStates(channelIds), prefs,
       relays: this.relaySockets().filter((r) => channelIds.includes(r.att.voice)).map((r) => this.relayState(r.att)),
@@ -1246,14 +1258,7 @@ export class Hub extends DurableObject {
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)`,
           newId(), att.uid, row.id, row.channel_id, r.serverId || null, row.user_id, m.reason, clean(m.note, 300), Date.now());
         if (r.kind === 'dm' && m.block) this.sql.exec('INSERT OR IGNORE INTO blocks (blocker, blocked) VALUES (?, ?)', att.uid, row.user_id);
-        if (r.kind === 'text') {
-          const owner = this.sql.exec('SELECT owner_id FROM servers WHERE id = ?', r.serverId).one().owner_id;
-          if (owner !== att.uid) {
-            this.notify(owner, { kind: 'report', server_id: r.serverId, channel_id: r.id, actor_id: att.uid, text: snippet(row.text || '📷 صورة') },
-              { title: `بلاغ جديد في #${r.ch.name}`, body: `${user.display}: ${REPORT_REASONS[m.reason]}`, tag: `report:${r.serverId}`, url: `/?server=${r.serverId}` }, 'mentions');
-          }
-          this.sendReportCount(r.serverId);
-        }
+        // البلاغات توصل للدعم الفني (المشرف) بس، مو لصاحب القروب
         for (const admin of this.adminIds()) {
           if (admin === att.uid) continue;
           this.notify(admin, { kind: 'report', server_id: r.serverId || null, channel_id: r.id, actor_id: att.uid, text: snippet(row.text || '📷 صورة') },
@@ -1262,6 +1267,37 @@ export class Hub extends DurableObject {
         }
         this.sendAdminCount();
         reply({ t: 'reported', req: m.req, blocks: this.blockList(att.uid) });
+        return;
+      }
+      case 'admin.users': {
+        if (!this.isAdmin(user)) return error('forbidden');
+        const online = new Set(this.sockets().map((s) => s.att.uid));
+        const list = this.sql.exec(`SELECT u.id, u.username, u.display, u.hue, u.created, u.suspended,
+            (SELECT COUNT(*) FROM members m WHERE m.user_id = u.id) AS groups
+          FROM users u ORDER BY u.created DESC LIMIT 2000`).toArray()
+          .map((u) => ({ ...u, suspended: !!u.suspended, online: online.has(u.id), staff: this.adminNames().includes(u.username) }));
+        reply({ t: 'admin.users', list, req: m.req });
+        return;
+      }
+      case 'admin.resetPassword': {
+        if (!this.isAdmin(user)) return error('forbidden');
+        // حد: 20 كل ساعة
+        att.resets = (att.resets || []).filter((t) => Date.now() - t < 3600000);
+        if (att.resets.length >= 20) return error('slow_down');
+        const target = this.sql.exec('SELECT * FROM users WHERE id = ?', asId(m.userId)).toArray()[0];
+        if (!target) return error('not_found');
+        if (target.id === user.id || this.isAdmin(target)) return error('forbidden');
+        att.resets.push(Date.now());
+        ws.serializeAttachment(att);
+        const password = tempPassword();
+        const salt = randomBytes(16);
+        const hash = await hashPassword(password, salt);
+        this.sql.exec('UPDATE users SET hash = ?, salt = ? WHERE id = ?', b64(hash), b64(salt), target.id);
+        // نطلّعه من كل الأجهزة، ويدخل بكلمة المرور الجديدة
+        this.sql.exec('DELETE FROM sessions WHERE user_id = ?', target.id);
+        this.closeSessions((a) => a.uid === target.id);
+        console.log('admin reset password', user.username, '->', target.username);
+        reply({ t: 'admin.password', password, req: m.req });
         return;
       }
       case 'admin.reports': {

@@ -400,6 +400,8 @@ function handle(m) {
     case 'reports.count': S.reportCounts[m.serverId] = m.n; renderReportCount(); break;
     case 'admin.count': S.adminCount = m.n; renderAdmin(); break;
     case 'admin.data': settle(m.req, m); break;
+    case 'admin.users': settle(m.req, m); break;
+    case 'admin.password': settle(m.req, m); break;
     case 'reports': settle(m.req, m.list); if (!$('#reportsModal').classList.contains('hidden')) fillReports(m.serverId, m.list); break;
     case 'notif': {
       S.notifs.unshift(m.notif);
@@ -3008,7 +3010,7 @@ function openReport(m) {
   $('#reportBlockRow').classList.toggle('hidden', !isDm);
   $('#reportWho').textContent = isDm
     ? 'البلاغ ينحفظ عندنا. والحظر يمنعه يرسل لك.'
-    : `البلاغ يوصل لصاحب القروب (${userOf(f?.server?.owner).display}) وهو يقرر وش يسوي. ما أحد يدري إنك انت اللي بلّغت غيره.`;
+    : 'البلاغ يوصل للدعم الفني وهو يقرر وش يسوي. ما أحد يدري إنك انت اللي بلّغت غيره.';
   openModal('#reportModal');
 }
 $('#reportForm').addEventListener('submit', async (e) => {
@@ -3020,7 +3022,7 @@ $('#reportForm').addEventListener('submit', async (e) => {
       await request({ t: 'report', messageId: m.id, reason: f.reason.value, note: f.note.value, block: f.block.checked });
       closeModals();
       const isDm = findChannel(m.channel)?.channel.kind === 'dm';
-      toast(isDm ? (f.block.checked ? 'وصل بلاغك، وحظرناه عنك' : 'وصل بلاغك') : 'وصل بلاغك لصاحب القروب. شكراً إنك تساعد', 'ok');
+      toast(isDm ? (f.block.checked ? 'وصل بلاغك، وحظرناه عنك' : 'وصل بلاغك') : 'وصل بلاغك للدعم الفني. شكراً إنك تساعد', 'ok');
     } catch (err) { toast(ERRORS[err.message] || ERRORS.network, 'err'); }
   });
 });
@@ -3161,7 +3163,44 @@ function fillAdmin(d) {
     : '<p class="bell-empty">ما فيه حسابات موقوفة.</p>';
 }
 $('#adminBtn').addEventListener('click', openAdmin);
+/* ---- المشرف: قائمة المستخدمين، وكلمة مرور مؤقتة ---- */
+let adminUsers = [];
+function fillAdminUsers() {
+  const q = $('#adminUserSearch').value.trim().toLowerCase();
+  const list = q ? adminUsers.filter((u) => `${u.username} ${u.display}`.toLowerCase().includes(q)) : adminUsers;
+  $('#adminUserCount').textContent = `${adminUsers.length} مستخدم · ${adminUsers.filter((u) => u.online).length} متصل الحين`;
+  $('#adminUsers').innerHTML = list.slice(0, 300).map((u) => `
+    <div class="report-card user-card">
+      <div class="rc-head">${avatar(u, 'sm')}<div><b>${esc(u.display)} <small dir="ltr">@${esc(u.username)}</small></b>
+        <small>سجّل ${timeLabel(u.created)} · ${u.groups} قروب${u.online ? ' · <span class="ok-text">متصل</span>' : ''}${u.suspended ? ' · <span class="warn-text">موقوف</span>' : ''}</small></div></div>
+      ${u.staff ? '' : `<div class="rc-actions"><button type="button" class="btn btn-soft btn-sm" data-reset="${esc(u.id)}" data-name="${esc(u.display)}">كلمة مرور جديدة</button></div>`}
+    </div>`).join('') || '<p class="hint">ما لقينا أحد.</p>';
+}
+async function loadAdminUsers() {
+  $('#adminUsers').innerHTML = '<div class="loading-msgs"><i></i><i></i><i></i></div>';
+  try { adminUsers = (await request({ t: 'admin.users' })).list; fillAdminUsers(); }
+  catch (err) { $('#adminUsers').innerHTML = `<p class="hint warn">${esc(ERRORS[err.message] || ERRORS.network)}</p>`; }
+}
+$('#adminModal .seg-tabs').addEventListener('click', (e) => { if (e.target.closest('[data-pane=ausers]')) loadAdminUsers(); });
+$('#adminUserSearch').addEventListener('input', fillAdminUsers);
+
 $('#adminModal').addEventListener('click', async (e) => {
+  const reset = e.target.closest('[data-reset]');
+  if (reset) {
+    const name = reset.dataset.name;
+    const ok = await confirmBox(`كلمة مرور جديدة لـ ${name}؟`, 'كلمة المرور القديمة تتوقف، ويطلع من كل الأجهزة. بتطلع لك كلمة مرور مؤقتة ترسلها له.', 'سوّها');
+    if (!ok) { openModal('#adminModal'); return; }
+    try {
+      const { password } = await request({ t: 'admin.resetPassword', userId: reset.dataset.reset });
+      try { await navigator.clipboard.writeText(password); } catch { /* ما سمح بالنسخ */ }
+      $('#confirmText').style.userSelect = 'text';
+      await confirmBox('كلمة المرور الجديدة', `${password}\n\nانسخناها لك. ارسلها له، وخلّه يغيّرها من الإعدادات ← حسابي. ما بتطلع مرة ثانية.`, 'تمام');
+      $('#confirmText').style.userSelect = '';
+    } catch (err) { toast(ERRORS[err.message] || ERRORS.network, 'err'); }
+    openModal('#adminModal');
+    $('#adminModal .seg-tabs [data-pane=ausers]').click();
+    return;
+  }
   const photo = e.target.closest('[data-photo]');
   if (photo?.dataset.photo) { openViewer(photo.dataset.photo); return; }
   const act = e.target.closest('[data-admin]'), un = e.target.closest('[data-unsuspend]');

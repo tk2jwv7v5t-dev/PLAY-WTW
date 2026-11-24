@@ -115,7 +115,7 @@
         <div id="serverMenu" class="menu hidden" role="menu">
           <button type="button" data-act="invite"><span data-icon="userPlus"></span>دعوة أصحابك</button>
           <button type="button" data-act="notify"><span data-icon="bell"></span>إشعارات القروب</button>
-          <button type="button" data-act="reports" class="owner-only"><span data-icon="flag"></span>البلاغات <b id="reportCount" class="menu-count hidden"></b></button>
+          <b id="reportCount" class="menu-count hidden" hidden></b>
           <button type="button" data-act="newText" class="owner-only"><span data-icon="hash"></span>روم كتابي جديد</button>
           <button type="button" data-act="newVoice" class="owner-only"><span data-icon="volume"></span>روم صوتي جديد</button>
           <button type="button" data-act="rename" class="owner-only"><span data-icon="edit"></span>تعديل القروب</button>
@@ -656,6 +656,7 @@
       <div class="seg-tabs">
         <button type="button" class="active" data-pane="areports">البلاغات <b id="adminTabCount"></b></button>
         <button type="button" data-pane="asuspended">الحسابات الموقوفة</button>
+        <button type="button" data-pane="ausers">المستخدمين</button>
       </div>
       <div class="pane" data-pane="areports">
         <p class="muted">كل البلاغات من القروبات والرسائل الخاصة. تشوف الرسالة اللي انبلّغ عنها بس، مو المحادثة كاملة.</p>
@@ -664,6 +665,12 @@
       <div class="pane hidden" data-pane="asuspended">
         <p class="muted">الحساب الموقوف ما يقدر يسجّل دخول. لو أوقفت أحد بالغلط، رجّعه من هنا.</p>
         <div id="adminSuspended" class="reports-list"></div>
+      </div>
+      <div class="pane hidden" data-pane="ausers">
+        <p class="muted">كلمات المرور مشفّرة وما أحد يقدر يشوفها. تقدر تسوي لأي شخص كلمة مرور مؤقتة جديدة وترسلها له، ويغيّرها بعدين من الإعدادات.</p>
+        <input id="adminUserSearch" class="input" type="search" maxlength="40" placeholder="دوّر باسم المستخدم أو الاسم" autocomplete="off">
+        <p id="adminUserCount" class="hint"></p>
+        <div id="adminUsers" class="reports-list"></div>
       </div>
     </div>
   </div>

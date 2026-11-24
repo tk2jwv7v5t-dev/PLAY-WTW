@@ -1525,3 +1525,9 @@ body:has(#app:not(.hidden)) .lang-btn { display: none; }
 /* الشريط اللي تحت (اسمك + المايك + السماعة + الإعدادات) شلناه، والإعدادات صارت فوق دايم */
 .user-panel { display: none !important; }
 #settingsBtnTop.only-mobile { display: grid; }
+
+/* قائمة المستخدمين للمشرف */
+#adminUserSearch { margin: 8px 0 4px; }
+.ok-text { color: var(--ok); font-weight: 600; }
+.warn-text { color: var(--danger); font-weight: 600; }
+#confirmText { white-space: pre-line; }
