@@ -581,7 +581,7 @@ function staffRows() {
     if (dm?.preview) return '';
     return `<div class="dm-row staff-row" role="button" tabindex="0" data-dm-user="${esc(u.id)}">
       <span class="dm-ava">${avatar(u, 'md')}<i class="st${S.online.has(u.id) ? ' on' : ''}"></i></span>
-      <span class="dm-main"><b class="dm-name">${esc(u.display)}${vb(u)}</b></span>
+      <span class="dm-main"><b class="dm-name">${esc(u.display)}${vb(u)}</b><span class="dm-sub" data-tr>الدعم الفني · راسلنا لأي مشكلة أو اقتراح</span></span>
       <span class="dm-side"><span class="staff-tag">رسمي</span></span>
     </div>`;
   }).join('');

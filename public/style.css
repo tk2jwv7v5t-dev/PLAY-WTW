@@ -1444,7 +1444,7 @@ button.hl-row:hover, .hl-row:has(button:hover) { background: var(--bg-3); }
   :root .app.in-call .stage.has-screens .tile .avatar.xl { width: 48px; height: 48px; font-size: 20px; }
   :root .app.in-call .stage.has-screens .tile-name { font-size: 12px; bottom: 8px; padding: 3px 10px; }
 
-  /* كرت "ادعُ ربعك" */
+  /* كرت "ارسل دعوة" */
   :root .app.in-call .call-invite {
     display: flex; align-items: center; gap: 12px; margin: 12px 16px 0; padding: 14px 16px;
     border-radius: 22px; background: #111214; color: #fff; text-align: start;
