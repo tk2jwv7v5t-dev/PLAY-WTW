@@ -1,0 +1,27 @@
+/* صفحات الشروط والخصوصية */
+:root { color-scheme: light; --text: #1a1f2b; --muted: #5d6574; --line: rgba(24, 32, 52, .09); }
+* { box-sizing: border-box; }
+body {
+  margin: 0; font-family: 'Readex Pro', system-ui, sans-serif; color: var(--text); line-height: 1.9;
+  background:
+    radial-gradient(900px 620px at 8% -5%, rgba(20, 140, 140, .14), transparent 60%),
+    radial-gradient(800px 600px at 105% 105%, rgba(255, 150, 100, .12), transparent 60%),
+    linear-gradient(160deg, #f2f3f6 0%, #e6e9ee 100%) fixed;
+}
+main {
+  width: min(820px, calc(100% - 32px)); margin: 32px auto; padding: 32px clamp(20px, 5vw, 48px) 40px;
+  background: rgba(255, 255, 255, .7); border: 1px solid rgba(255, 255, 255, .9); border-radius: 24px;
+  box-shadow: 0 12px 34px rgba(30, 40, 60, .1); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+}
+.top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: .5px; color: var(--text); text-decoration: none; }
+.brand i { width: 36px; height: 36px; border-radius: 11px; display: grid; place-items: center; background: linear-gradient(135deg, #1aa3a3, #0b6e72 55%, #064a50); }
+.brand i::after { content: ""; border-block: 7px solid transparent; border-left: 11px solid #fff; margin-left: 3px; }
+.back { font-size: 14px; color: var(--muted); }
+h1 { font-size: clamp(26px, 5vw, 34px); margin: 18px 0 4px; }
+.date { color: var(--muted); font-size: 14px; margin: 0 0 18px; }
+h2 { font-size: 19px; margin: 26px 0 6px; padding-top: 18px; border-top: 1px solid var(--line); }
+p, li { font-size: 16px; }
+ul { padding-inline-start: 22px; margin: 6px 0; }
+a { color: #0b6e72; }
+.other { margin-top: 30px; padding-top: 18px; border-top: 1px solid var(--line); font-size: 15px; }
