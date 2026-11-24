@@ -581,7 +581,7 @@ function staffRows() {
     if (dm?.preview) return '';
     return `<div class="dm-row staff-row" role="button" tabindex="0" data-dm-user="${esc(u.id)}">
       <span class="dm-ava">${avatar(u, 'md')}<i class="st${S.online.has(u.id) ? ' on' : ''}"></i></span>
-      <span class="dm-main"><b class="dm-name">${esc(u.display)}${vb(u)}</b><span class="dm-sub" data-tr>الدعم الفني · راسلنا لأي مشكلة أو اقتراح</span></span>
+      <span class="dm-main"><b class="dm-name">${esc(u.display)}${vb(u)}</b></span>
       <span class="dm-side"><span class="staff-tag">رسمي</span></span>
     </div>`;
   }).join('');
@@ -1057,6 +1057,8 @@ function applyVolumes() {
     if (sid === S.sid) continue;
     t.video.muted = S.deaf || t.muted;
     t.video.volume = Math.min(1, (settings.outVol / 100) * t.vol);
+    const r = relayView.get(sid);
+    if (r?.gain) r.gain.gain.value = relayGainValue(sid);
   }
 }
 
@@ -1619,9 +1621,11 @@ function onRelayFrame(buf) {
   if (buf.byteLength < 16) return;
   const sid = new TextDecoder().decode(new Uint8Array(buf, 0, 12)).trim();
   const r = relayView.get(sid);
-  if (!r || r.busy) return; // ما نعرضه الحين، أو للحين نرسم اللي قبله
+  if (!r) return; // ما نعرضه الحين
+  if (new Uint8Array(buf, 12, 1)[0] === 0x41) { playRelayAudio(sid, r, buf.slice(13)); return; }
+  if (r.busy) return; // للحين نرسم الصورة اللي قبلها
   r.busy = true;
-  createImageBitmap(new Blob([new Uint8Array(buf, 12)], { type: 'image/jpeg' }))
+  createImageBitmap(new Blob([new Uint8Array(buf, 13)], { type: 'image/jpeg' }))
     .then((bmp) => {
       if (r.canvas.width !== bmp.width || r.canvas.height !== bmp.height) { r.canvas.width = bmp.width; r.canvas.height = bmp.height; }
       r.ctx.drawImage(bmp, 0, 0);
@@ -1630,9 +1634,37 @@ function onRelayFrame(buf) {
     .catch(() => {})
     .finally(() => { r.busy = false; });
 }
+// صوت بث الجوال: PCM أحادي 24kHz، نشغّله قطعة ورا قطعة بدون فراغات
+const RELAY_RATE = 24000;
+function relayGainValue(sid) {
+  const t = S.tiles.get(sid);
+  if (S.deaf || t?.muted) return 0;
+  return (settings.outVol / 100) * (t?.vol ?? 1);
+}
+function playRelayAudio(sid, r, ab) {
+  if (ab.byteLength < 4) return;
+  const ctx = levels.ctx();
+  if (ctx.state === 'suspended') { ctx.resume().catch(() => {}); if (ctx.state === 'suspended') needGesture(); }
+  if (!r.gain) { r.gain = ctx.createGain(); r.gain.connect(ctx.destination); r.next = 0; }
+  r.gain.gain.value = relayGainValue(sid);
+  const pcm = new Int16Array(ab, 0, ab.byteLength >> 1);
+  const buf = ctx.createBuffer(1, pcm.length, RELAY_RATE);
+  const ch = buf.getChannelData(0);
+  for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  src.connect(r.gain);
+  const now = ctx.currentTime;
+  // لو تأخرنا أو سبقنا كثير نبدأ من جديد بفاصل صغير (يمنع تراكم التأخير)
+  if (r.next < now + 0.05 || r.next > now + 0.8) r.next = now + 0.15;
+  src.start(r.next);
+  r.next += buf.duration;
+}
+
 function stopRelay(sid) {
   const r = relayView.get(sid);
   if (!r) return;
+  try { r.gain?.disconnect(); } catch { /* */ }
   r.stream.getTracks().forEach((t) => t.stop());
   relayView.delete(sid);
 }

@@ -909,9 +909,17 @@ export class Hub extends DurableObject {
   }
   relayFrame(ws, att, data) {
     const now = Date.now();
-    // لين 15 صورة بالثانية، وكل صورة أقل من 700 كيلو
-    if (data.byteLength > 700 * 1024 || now - att.last < 60) return;
-    att.last = now;
+    // أول بايت 'A' = صوت (PCM)، غير كذا = صورة JPEG
+    const audio = data.byteLength > 1 && new Uint8Array(data, 0, 1)[0] === 0x41;
+    if (audio) {
+      // صوت: قطع صغيرة (حوالي 100ms)، لين 30 قطعة بالثانية
+      if (data.byteLength > 32 * 1024 || now - (att.alast || 0) < 25) return;
+      att.alast = now;
+    } else {
+      // لين 15 صورة بالثانية، وكل صورة أقل من 700 كيلو
+      if (data.byteLength > 700 * 1024 || now - att.last < 60) return;
+      att.last = now;
+    }
     // الآيفون يقفل اتصال التطبيق لما يطلع منه، فما نربط البث فيه.
     // بس كل 10 ثواني نتأكد إن الروم للحين موجود وإنه للحين عضو في القروب (ما انطرد)
     if (now - att.check > 10000) {
@@ -920,10 +928,13 @@ export class Hub extends DurableObject {
       if (!ch || !this.isMember(ch.server_id, att.uid)) { this.dropSocket(ws); try { ws.close(4000, 'left'); } catch { /* */ } return; }
     }
     ws.serializeAttachment(att);
+    // للي يتفرجون: 12 بايت رقم البث + نوعه (V صورة / A صوت) + المحتوى
     const head = new TextEncoder().encode(att.sid.padEnd(12, ' ').slice(0, 12));
-    const out = new Uint8Array(12 + data.byteLength);
+    const body = audio ? new Uint8Array(data, 1) : new Uint8Array(data);
+    const out = new Uint8Array(13 + body.byteLength);
     out.set(head, 0);
-    out.set(new Uint8Array(data), 12);
+    out[12] = audio ? 0x41 : 0x56;
+    out.set(body, 13);
     for (const s of this.sockets()) {
       if (s.att.voice !== att.voice || s.att.uid === att.uid) continue;
       if (s.att.relayOff?.includes(att.sid)) continue;

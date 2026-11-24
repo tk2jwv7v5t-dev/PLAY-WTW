@@ -1512,7 +1512,7 @@ body:has(#app:not(.hidden)) .lang-btn { display: none; }
 }
 
 /* بث شاشة جوال: صورة بس، بدون صوت أو اختيار جودة */
-.screen-tile.is-relay :is([data-act=mute], .tile-vol, .q-btn) { display: none; }
+.screen-tile.is-relay .q-btn { display: none; }
 
 @media (max-width: 900px) {
   /* ستة أزرار في شريط المكالمة: نصغّرها شوي عشان تتسع */

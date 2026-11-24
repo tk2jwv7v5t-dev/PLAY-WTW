@@ -1,6 +1,8 @@
 import ReplayKit
 import Network
 import CoreImage
+import CoreMedia
+import AudioToolbox
 import UIKit
 
 /// جزء البث: الآيفون يعطينا صور الشاشة، نصغّرها ونحوّلها JPEG ونرسلها للسيرفر.
@@ -19,6 +21,12 @@ class SampleHandler: RPBroadcastSampleHandler {
     private let minInterval: CFTimeInterval = 1.0 / 10.0 // 10 صور بالثانية
     private let maxSide: CGFloat = 1280
     private let quality: CGFloat = 0.5
+
+    // صوت الجوال (الألعاب والفيديوهات): نحوّله لصوت أحادي 24kHz ونرسله قطع كل 100ms تقريباً
+    private let audioRate: Double = 24000
+    private var audioPending = Data()
+    private var resamplePos: Double = 0
+    private var lastMono: Float = 0
 
     override func broadcastStarted(withSetupInfo setupInfo: [String: NSObject]?) {
         let ext = Bundle.main.bundleIdentifier ?? ""
@@ -113,6 +121,7 @@ class SampleHandler: RPBroadcastSampleHandler {
     }
 
     override func processSampleBuffer(_ sampleBuffer: CMSampleBuffer, with sampleBufferType: RPSampleBufferType) {
+        if sampleBufferType == .audioApp { handleAudio(sampleBuffer); return }
         guard sampleBufferType == .video, let socket = socket else { return }
         let now = CACurrentMediaTime()
         lock.lock()
@@ -144,6 +153,98 @@ class SampleHandler: RPBroadcastSampleHandler {
                 self?.done()
                 if error != nil { self?.stop("انقطع البث. تأكد من النت وجرّب مرة ثانية.") }
             }
+        }
+    }
+
+    private func handleAudio(_ sampleBuffer: CMSampleBuffer) {
+        guard let socket = socket,
+              let desc = CMSampleBufferGetFormatDescription(sampleBuffer),
+              let asbdPtr = CMAudioFormatDescriptionGetStreamBasicDescription(desc) else { return }
+        let asbd = asbdPtr.pointee
+        guard asbd.mFormatID == kAudioFormatLinearPCM, asbd.mSampleRate > 0 else { return }
+        let frames = CMSampleBufferGetNumSamples(sampleBuffer)
+        guard frames > 0 else { return }
+
+        var needed = 0
+        CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+            sampleBuffer, bufferListSizeNeededOut: &needed, bufferListOut: nil, bufferListSize: 0,
+            blockBufferAllocator: nil, blockBufferMemoryAllocator: nil, flags: 0, blockBufferOut: nil)
+        guard needed > 0 else { return }
+        let raw = UnsafeMutableRawPointer.allocate(byteCount: needed, alignment: MemoryLayout<AudioBufferList>.alignment)
+        defer { raw.deallocate() }
+        let ablPtr = raw.bindMemory(to: AudioBufferList.self, capacity: 1)
+        var block: CMBlockBuffer?
+        let status = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+            sampleBuffer, bufferListSizeNeededOut: nil, bufferListOut: ablPtr, bufferListSize: needed,
+            blockBufferAllocator: kCFAllocatorDefault, blockBufferMemoryAllocator: kCFAllocatorDefault,
+            flags: kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment, blockBufferOut: &block)
+        guard status == noErr else { return }
+        let buffers = UnsafeMutableAudioBufferListPointer(ablPtr)
+
+        let flags = asbd.mFormatFlags
+        let isFloat = flags & kAudioFormatFlagIsFloat != 0
+        let bigEndian = flags & kAudioFormatFlagIsBigEndian != 0
+        let nonInterleaved = flags & kAudioFormatFlagIsNonInterleaved != 0
+        let channels = max(1, Int(asbd.mChannelsPerFrame))
+        let bits = Int(asbd.mBitsPerChannel)
+
+        // نقرا عينة وحدة كرقم بين -1 و 1
+        func read(_ buffer: AudioBuffer, _ index: Int) -> Float {
+            guard let data = buffer.mData else { return 0 }
+            if isFloat && bits == 32 {
+                var bitsValue = data.load(fromByteOffset: index * 4, as: UInt32.self)
+                if bigEndian { bitsValue = UInt32(bigEndian: bitsValue) }
+                return Float(bitPattern: bitsValue)
+            }
+            if bits == 16 {
+                var v = data.load(fromByteOffset: index * 2, as: Int16.self)
+                if bigEndian { v = Int16(bigEndian: v) }
+                return Float(v) / 32768
+            }
+            if bits == 32 {
+                var v = data.load(fromByteOffset: index * 4, as: Int32.self)
+                if bigEndian { v = Int32(bigEndian: v) }
+                return Float(v) / 2147483648
+            }
+            return 0
+        }
+
+        // نجمع القنوات في قناة وحدة
+        var mono = [Float](repeating: 0, count: frames)
+        for i in 0..<frames {
+            var sum: Float = 0
+            if nonInterleaved {
+                for c in 0..<min(channels, buffers.count) { sum += read(buffers[c], i) }
+            } else if let first = buffers.first {
+                for c in 0..<channels { sum += read(first, i * channels + c) }
+            }
+            mono[i] = sum / Float(channels)
+        }
+
+        // نحوّل السرعة لـ 24kHz (تقريب خطي بسيط وخفيف)
+        let step = asbd.mSampleRate / audioRate
+        var out = Data(capacity: Int(Double(frames) / step) * 2 + 4)
+        var pos = resamplePos
+        while pos < Double(frames) {
+            let i = Int(pos)
+            let frac = Float(pos - Double(i))
+            let a = i == 0 ? lastMono : mono[i - 1]
+            let b = mono[i]
+            let v = max(-1, min(1, a + (b - a) * frac))
+            var sample = Int16(v * 32767).littleEndian
+            withUnsafeBytes(of: &sample) { out.append(contentsOf: $0) }
+            pos += step
+        }
+        resamplePos = pos - Double(frames)
+        lastMono = mono[frames - 1]
+
+        audioPending.append(out)
+        // حوالي 100ms (2400 عينة × 2 بايت)
+        if audioPending.count >= 4800 {
+            var packet = Data([0x41])
+            packet.append(audioPending)
+            audioPending = Data()
+            socket.send(.data(packet)) { _ in }
         }
     }
 
