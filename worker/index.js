@@ -26,6 +26,8 @@ const NOTIFY_LEVELS = ['all', 'mentions', 'none'];
 const MAX_NOTIFS = 100;       // نحتفظ بآخر 100 إشعار لكل شخص
 // اسم حساب الإدارة (الدعم الفني) — ثابت ومحجوز، ما أحد ثاني يقدر يتسمّى فيه
 const STAFF_NAME = 'Play WTW Support';
+// نسخة شروط الاستخدام وسياسة الخصوصية: غيّرها لما تتعدّل الشروط عشان الكل يوافق من جديد
+const TERMS_VERSION = '2026-11-24';
 const reservedName = (name) => /play\s*[-_.~]?\s*wtw|support|الدعم|دعم فني|الإدارة|الادارة|ادارة الموقع|إدارة الموقع|admin|مشرف/i.test(String(name || '').normalize('NFKC'));
 const MAX_PUSH_DEVICES = 10;  // أجهزة الإشعارات لكل حساب
 const snippet = (t, n = 140) => (t.length > n ? Array.from(t).slice(0, n).join('') + '…' : t);
@@ -177,6 +179,8 @@ export class Hub extends DurableObject {
     try { this.sql.exec('ALTER TABLE messages ADD COLUMN file_id TEXT'); } catch { /* موجود */ }
     // الحسابات الموقوفة من إدارة الموقع
     try { this.sql.exec('ALTER TABLE users ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0'); } catch { /* موجود */ }
+    // نسخة الشروط اللي وافق عليها (لو تغيّرت الشروط نسأله مرة ثانية)
+    try { this.sql.exec('ALTER TABLE users ADD COLUMN terms TEXT'); } catch { /* موجود */ }
   }
 
   /* ---------- HTTP ---------- */
@@ -1003,7 +1007,7 @@ export class Hub extends DurableObject {
       .toArray().map((d) => this.dmPayload(d, user.id));
     const reports = {}; // البلاغات صارت للدعم الفني بس
     return {
-      t: 'ready', me: { ...this.publicUser(user), admin: this.isAdmin(user) }, sid, servers, online, voice: this.voiceStates(channelIds), prefs,
+      t: 'ready', me: { ...this.publicUser(user), admin: this.isAdmin(user), termsOk: user.terms === TERMS_VERSION }, termsVersion: TERMS_VERSION, sid, servers, online, voice: this.voiceStates(channelIds), prefs,
       relays: this.relaySockets().filter((r) => channelIds.includes(r.att.voice)).map((r) => this.relayState(r.att)),
       adminCount: this.isAdmin(user) ? this.adminOpenCount() : 0,
       notifs: this.notifList(user.id), dms, blocks: this.blockList(user.id), reports, staff: this.staffList(),
@@ -1370,6 +1374,11 @@ export class Hub extends DurableObject {
         ws.serializeAttachment(att);
         return;
       }
+      case 'terms.accept':
+        if (m.version !== TERMS_VERSION) return error('bad_request');
+        this.sql.exec('UPDATE users SET terms = ? WHERE id = ?', TERMS_VERSION, user.id);
+        reply({ t: 'terms.ok', req: m.req });
+        return;
       case 'relay.stop':
         this.closeRelays(att.uid);
         return;

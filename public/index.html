@@ -293,6 +293,19 @@
     </nav>
   </div>
 
+  <!-- الموافقة على الشروط: تطلع قبل أي شي، وما تنقفل إلا بالموافقة أو الرفض -->
+  <div id="termsGate" class="terms-gate hidden" role="dialog" aria-modal="true" aria-labelledby="termsTitle">
+    <div class="terms-card">
+      <div class="brand-mark lg"></div>
+      <h2 id="termsTitle">قبل ما تبدأ</h2>
+      <p>عشان تستخدم PLAY WTW لازم توافق على <a id="termsLink" href="/terms.html">شروط الاستخدام</a> و<a id="privacyLink" href="/privacy.html">سياسة الخصوصية</a>.</p>
+      <div class="terms-actions">
+        <button id="termsAccept" class="btn btn-primary btn-lg" type="button">أوافق</button>
+        <button id="termsReject" class="btn btn-soft btn-lg" type="button">ما أوافق</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ================= النوافذ ================= -->
   <div id="serverModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="serverModalTitle">
     <div class="modal-card">

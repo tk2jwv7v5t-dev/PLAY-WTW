@@ -248,6 +248,9 @@ function handle(m) {
   switch (m.t) {
     case 'ready': {
       S.me = m.me; S.sid = m.sid;
+      S.termsVersion = m.termsVersion;
+      // ما وافق على الشروط (أو تغيّرت): نوقفه قدام نافذة الموافقة
+      $('#termsGate').classList.toggle('hidden', !!m.me.termsOk);
       S.users.set(m.me.id, m.me);
       S.servers.clear();
       m.servers.forEach(addServer);
@@ -401,6 +404,7 @@ function handle(m) {
     case 'admin.count': S.adminCount = m.n; renderAdmin(); break;
     case 'admin.data': settle(m.req, m); break;
     case 'admin.users': settle(m.req, m); break;
+    case 'terms.ok': settle(m.req, m); break;
     case 'admin.password': settle(m.req, m); break;
     case 'reports': settle(m.req, m.list); if (!$('#reportsModal').classList.contains('hidden')) fillReports(m.serverId, m.list); break;
     case 'notif': {
@@ -3409,6 +3413,23 @@ $('#contactLinks').addEventListener('click', (e) => {
   const b = e.target.closest('[data-dm-user]');
   if (b) startDm({ userId: b.dataset.dmUser });
 });
+
+/* ---- الموافقة على الشروط ---- */
+$('#termsAccept').addEventListener('click', (e) => busy(e.currentTarget, 'جاري الحفظ…', async () => {
+  try {
+    await request({ t: 'terms.accept', version: S.termsVersion });
+    $('#termsGate').classList.add('hidden');
+  } catch (err) { toast(ERRORS[err.message] || ERRORS.network, 'err'); }
+}));
+$('#termsReject').addEventListener('click', () => {
+  $('#termsGate').classList.add('hidden');
+  toast('ما تقدر تستخدم PLAY WTW بدون الموافقة على الشروط', 'err');
+  // نطلّعه من حسابه ونرجّعه لصفحة الدخول
+  setTimeout(() => $('#logoutBtn').click(), 1200);
+});
+if (LANG === 'en') {
+  $('#termsGate p').innerHTML = 'To use PLAY WTW you need to agree to the <a href="/terms-en.html">Terms of use</a> and the <a href="/privacy-en.html">Privacy policy</a>.';
+}
 
 // روابط الشروط والخصوصية: النسخة الإنجليزية لو اللغة إنجليزي
 if (LANG === 'en') for (const el of $$('.legal-links a')) el.href = el.getAttribute('href').replace('.html', '-en.html');
