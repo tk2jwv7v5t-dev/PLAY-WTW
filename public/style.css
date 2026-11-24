@@ -1521,3 +1521,7 @@ body:has(#app:not(.hidden)) .lang-btn { display: none; }
   :root .app.in-call .dock:has(#dFlip:not(.hidden)):has(#dCam:not(.hidden)):has(#dShare:not(.hidden)) .dock-btn { width: 46px; height: 46px; }
   :root .app.in-call .dock:has(#dCam:not(.hidden)) .dock-btn svg.i { width: 24px; height: 24px; }
 }
+
+/* الشريط اللي تحت (اسمك + المايك + السماعة + الإعدادات) شلناه، والإعدادات صارت فوق دايم */
+.user-panel { display: none !important; }
+#settingsBtnTop.only-mobile { display: grid; }

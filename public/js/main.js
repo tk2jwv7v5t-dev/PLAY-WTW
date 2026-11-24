@@ -590,7 +590,9 @@ function staffRows() {
 function dmRows() {
   const q = $('#dmSearch').value.trim().toLowerCase();
   const all = [...S.dms.values()].sort((a, b) => (b.other?.verified ? 1 : 0) - (a.other?.verified ? 1 : 0) || (b.last || 0) - (a.last || 0));
-  const dms = q ? all.filter((d) => `${d.other.display} ${d.other.username}`.toLowerCase().includes(q)) : all;
+  const staffIds = new Set((S.staff || []).map((u) => u.id));
+  const visible = all.filter((d) => !(staffIds.has(d.other.id) && !d.preview && !q));
+  const dms = q ? visible.filter((d) => `${d.other.display} ${d.other.username}`.toLowerCase().includes(q)) : visible;
   const rows = dms.map((d) => {
     const unread = S.unread.has(d.id);
     const ts = d.preview?.ts || d.last;
@@ -646,9 +648,9 @@ function renderMain() {
     S.viewTimer = setTimeout(() => v.classList.remove('view-in'), 900);
   }
   const dm = c?.kind === 'dm' ? c.dm : null;
-  $('#chanIcon').innerHTML = c ? (c.kind === 'voice' ? I.volume : dm ? I.at : I.hash) : home ? I.home : '';
+  $('#chanIcon').innerHTML = c ? (c.kind === 'voice' ? I.volume : dm ? '' : I.hash) : home ? I.home : '';
   $('#chanName').textContent = c ? c.name : s ? s.name : 'الرئيسية';
-  $('#chanTopic').textContent = c?.kind === 'voice' ? 'روم صوتي' : dm ? `@${dm.other?.username || ''}` : c ? `في ${s.name}` : '';
+  $('#chanTopic').textContent = c?.kind === 'voice' ? 'روم صوتي' : dm ? '' : c ? `في ${s.name}` : '';
   $('#msgInput').placeholder = dm ? `اكتب رسالة لـ ${c.name}` : c ? `اكتب رسالة في #${c.name}` : '';
   document.title = c ? `${dm ? '@' : c.kind === 'voice' ? '🔊' : '#'}${c.name}${s ? ` · ${s.name}` : ''} — PLAY WTW` : 'PLAY WTW';
   // حظرته: نقفل الكتابة ونعطيه زر فك الحظر
@@ -815,7 +817,7 @@ function renderMessages(scrollToEnd) {
   let html = '';
   if (st.loaded && !st.more) {
     html += c?.kind === 'dm'
-      ? `<div class="chan-start">${avatar(c.dm.other, 'lg')}<h2>${esc(c.name)}</h2><p class="muted">هذي بداية محادثتك الخاصة مع ${esc(c.name)} <span dir="ltr">@${esc(c.dm.other?.username || '')}</span>. محد يشوفها غيركم.</p></div>`
+      ? `<div class="chan-start">${avatar(c.dm.other, 'lg')}<h2>${esc(c.name)}</h2></div>`
       : `<div class="chan-start"><div class="cs-icon">${I.hash}</div><h2>هلا في #${esc(c?.name || '')}</h2><p class="muted">هذي بداية الروم. ابدأ السالفة!</p></div>`;
   } else if (st.more && st.loaded) {
     html += `<button class="load-more" type="button" id="loadMore">رسايل أقدم</button>`;
