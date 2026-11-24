@@ -25,3 +25,4 @@ p, li { font-size: 16px; }
 ul { padding-inline-start: 22px; margin: 6px 0; }
 a { color: #0b6e72; }
 .other { margin-top: 30px; padding-top: 18px; border-top: 1px solid var(--line); font-size: 15px; }
+.links { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 14px; }

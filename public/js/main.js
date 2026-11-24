@@ -3410,6 +3410,9 @@ $('#contactLinks').addEventListener('click', (e) => {
   if (b) startDm({ userId: b.dataset.dmUser });
 });
 
+// روابط الشروط والخصوصية: النسخة الإنجليزية لو اللغة إنجليزي
+if (LANG === 'en') for (const el of $$('.legal-links a')) el.href = el.getAttribute('href').replace('.html', '-en.html');
+
 // زر اللغة في الشاشة الافتتاحية وصفحة الدخول
 $('#langBtn').textContent = LANG === 'en' ? 'العربية' : 'English';
 $('#langBtn').setAttribute('aria-label', LANG === 'en' ? 'التبديل للعربية' : 'Switch to English');
