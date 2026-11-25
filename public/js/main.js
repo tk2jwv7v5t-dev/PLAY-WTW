@@ -3196,9 +3196,21 @@ $('#adminModal').addEventListener('click', async (e) => {
     if (!ok) { openModal('#adminModal'); return; }
     try {
       const { password } = await request({ t: 'admin.resetPassword', userId: reset.dataset.reset });
-      try { await navigator.clipboard.writeText(password); } catch { /* ما سمح بالنسخ */ }
+      // النسخ لازم يصير وقت الضغطة نفسها، وإلا الآيفون يرفضه بصمت
+      const copy = () => {
+        const t = document.createElement('textarea');
+        t.value = password; t.readOnly = true; t.style.cssText = 'position:fixed;opacity:0;top:0';
+        document.body.append(t); t.setSelectionRange(0, password.length); t.select();
+        let done = false;
+        try { done = document.execCommand('copy'); } catch { /* ما ضبط */ }
+        t.remove();
+        if (!done) navigator.clipboard?.writeText(password).then(() => toast('انسخت كلمة المرور ✅', 'ok'), () => toast('ما قدرنا ننسخ، اكتبها بيدك', 'err'));
+        else toast('انسخت كلمة المرور ✅', 'ok');
+      };
+      $('#confirmOk').addEventListener('click', copy, { once: true });
       $('#confirmText').style.userSelect = 'text';
-      await confirmBox('كلمة المرور الجديدة', `${password}\n\nانسخناها لك. ارسلها له، وخلّه يغيّرها من الإعدادات ← حسابي. ما بتطلع مرة ثانية.`, 'تمام');
+      await confirmBox('كلمة المرور الجديدة', `${password}\n\nارسلها له، وخلّه يغيّرها من الإعدادات ← حسابي. ما بتطلع مرة ثانية.`, 'انسخها');
+      $('#confirmOk').removeEventListener('click', copy);
       $('#confirmText').style.userSelect = '';
     } catch (err) { toast(ERRORS[err.message] || ERRORS.network, 'err'); }
     openModal('#adminModal');

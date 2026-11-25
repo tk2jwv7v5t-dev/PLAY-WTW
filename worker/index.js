@@ -276,7 +276,10 @@ export class Hub extends DurableObject {
     // نحسب الهاش حتى لو اليوزر غلط عشان ما ينعرف من الوقت إذا اليوزر موجود
     const salt = user ? unb64(user.salt) : randomBytes(16);
     const hash = await hashPassword(password, salt);
-    if (!user || !sameBytes(hash, unb64(user.hash))) {
+    let ok = !!user && sameBytes(hash, unb64(user.hash));
+    // لو لصقها مع مسافة أو سطر زايد قبلها أو بعدها، نجرّبها بدونه
+    if (!ok && user && password.trim() !== password) ok = sameBytes(await hashPassword(password.trim(), salt), unb64(user.hash));
+    if (!ok) {
       this.noteFailure(req);
       return fail('bad_credentials', 401);
     }
