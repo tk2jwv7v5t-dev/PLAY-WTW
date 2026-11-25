@@ -692,11 +692,7 @@ function renderUserPanel() {
   $('#tabYouAvatar').innerHTML = avatar(S.me, 'xs');
   for (const el of $$('.app-only')) el.classList.toggle('hidden', !inApp());
   $('#youCard').innerHTML = `<div class="you-hero">${avatar(S.me, 'lg')}<i class="st on"></i></div>
-    <h2>${esc(S.me.display)}${vb(S.me)}</h2><p class="muted" dir="ltr">@${esc(S.me.username)}</p>
-    <div class="you-actions">
-      <button type="button" class="btn btn-soft btn-sm" data-you="mic">${S.micOn && S.hasMic && !S.deaf ? I.mic : I.micOff}<span>${S.micOn && S.hasMic && !S.deaf ? 'المايك شغال' : 'المايك مقفل'}</span></button>
-      <button type="button" class="btn btn-soft btn-sm" data-you="deaf">${S.deaf ? I.headphonesOff : I.headphones}<span>${S.deaf ? 'الصوت مكتوم' : 'الصوت شغال'}</span></button>
-    </div>`;
+    <h2>${esc(S.me.display)}${vb(S.me)}</h2><p class="muted" dir="ltr">@${esc(S.me.username)}</p>`;
   const micOn = S.micOn && S.hasMic && !S.deaf;
   for (const b of [$('#micBtn'), $('#dMic')]) {
     b.innerHTML = micOn ? I.mic : I.micOff;
